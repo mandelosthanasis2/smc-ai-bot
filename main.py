@@ -84,7 +84,7 @@ td { padding: 7px 9px; border-bottom: 1px solid #0a1520; }
 
 <h1>⚡ SMC AI TRADING BOT</h1>
 <div class="sub">
-  BITGET · BTC/USDT PERP · AUTO-REFRESH 20s
+  BITGET · BTC/USDT PERP · {{ leverage }}x LEVERAGE · AUTO-REFRESH 20s
   <span class="mode-badge">{{ mode }}</span>
 </div>
 
@@ -244,6 +244,7 @@ def index():
     return render_template_string(
         DASHBOARD,
         mode          = s["mode"],
+        leverage      = s.get("leverage", 1),
         balance       = s["balance"],
         pnl           = s["pnl_total"],
         wins          = wins,
