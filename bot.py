@@ -283,16 +283,34 @@ def detect_fvg(candles):
 # ══════════════════════════════════════════════════════════════════
 
 def build_daily_box(daily_candles):
-    """Yesterday's High/Low = Primary POI zones."""
+    """
+    Yesterday's High/Low = Primary POI zones.
+    Always use the most recent COMPLETED daily candle
+    (not the current incomplete one).
+    """
     if len(daily_candles) < 2:
         return None
-    y = daily_candles[-2]
+
+    now_utc   = datetime.now(timezone.utc)
+    today_str = now_utc.strftime("%Y-%m-%d")
+
+    # Find the most recent candle that is NOT today (i.e. completed)
+    yesterday = None
+    for c in reversed(daily_candles):
+        candle_date = datetime.fromtimestamp(c["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        if candle_date < today_str:
+            yesterday = c
+            break
+
+    if not yesterday:
+        yesterday = daily_candles[-2]   # fallback
+
     box = {
-        "high": y["high"],
-        "low":  y["low"],
-        "mid":  round((y["high"] + y["low"]) / 2, 2),
-        "date": datetime.fromtimestamp(y["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
-        "size": round(y["high"] - y["low"], 2),
+        "high": yesterday["high"],
+        "low":  yesterday["low"],
+        "mid":  round((yesterday["high"] + yesterday["low"]) / 2, 2),
+        "date": datetime.fromtimestamp(yesterday["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
+        "size": round(yesterday["high"] - yesterday["low"], 2),
     }
     state["box"] = box
     return box
@@ -474,7 +492,7 @@ def run_strategy():
     # ── Fetch price & candles ─────────────────────────────────────
     price      = get_ticker()
     candles_1h = get_candles(TIMEFRAME_1H, 150)
-    candles_1d = get_candles(TIMEFRAME_1D, 5)
+    candles_1d = get_candles(TIMEFRAME_1D, 10)
 
     if len(candles_1h) < 50 or len(candles_1d) < 2:
         state["last_signal"] = "Not enough candle data"
