@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 state = {
     "running":           True,
     "mode":              TRADING_MODE,
+    "leverage":          LEVERAGE,
     "position":          None,
     "last_signal":       "Starting...",
     "last_signal_time":  "",
@@ -52,6 +53,10 @@ state = {
 # ══════════════════════════════════════════════════════════════════
 
 BITGET_BASE = "https://api.bitget.com"
+
+# Bitget v2 API uses productType=USDT-FUTURES and symbol=BTCUSDT
+BITGET_SYMBOL    = "BTCUSDT"
+BITGET_PROD_TYPE = "USDT-FUTURES"
 
 def bitget_get(path, params=None):
     """Public GET request to Bitget."""
@@ -98,7 +103,7 @@ def get_balance():
     if TRADING_MODE == "PAPER":
         return state["balance"]
     try:
-        r = bitget_signed("GET", "/api/mix/v1/account/account?symbol=BTCUSDT_UMCBL&marginCoin=USDT")
+        r = bitget_signed("GET", f"/api/v2/mix/account/account?symbol={BITGET_SYMBOL}&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
         bal = float(r.get("data", {}).get("available", state["balance"]))
         state["balance"] = bal
         return bal
@@ -107,18 +112,28 @@ def get_balance():
         return state["balance"]
 
 
-def get_candles(symbol, granularity, limit=200):
+def get_candles(granularity, limit=200):
     """
-    Fetch OHLCV from Bitget public API.
+    Fetch OHLCV from Bitget v2 public API.
     granularity: '1H' or '1D'
     """
-    gran_map = {"1H": "1H", "1D": "1D", "4H": "4H", "1m": "1m"}
+    # Bitget v2 granularity format
+    gran_map = {"1H": "1H", "1D": "1Dutc", "4H": "4H", "15m": "15m", "1m": "1m"}
     gran = gran_map.get(granularity, "1H")
-    path = "/api/mix/v1/market/candles"
-    params = {"symbol": symbol, "granularity": gran, "limit": str(limit)}
+    path = "/api/v2/mix/market/candles"
+    params = {
+        "symbol":      BITGET_SYMBOL,
+        "productType": BITGET_PROD_TYPE,
+        "granularity": gran,
+        "limit":       str(limit),
+    }
     r = bitget_get(path, params)
     candles = []
     raw = r.get("data", [])
+    if not raw:
+        log.warning(f"No candle data returned. Response: {r}")
+        return candles
+    # Bitget v2 returns newest first — reverse to get oldest first
     for c in reversed(raw):
         try:
             candles.append({
@@ -135,13 +150,17 @@ def get_candles(symbol, granularity, limit=200):
 
 
 def get_ticker():
-    """Get current BTC price from Bitget."""
-    r = bitget_get("/api/mix/v1/market/ticker", {"symbol": SYMBOL})
+    """Get current BTC price from Bitget v2."""
+    r = bitget_get("/api/v2/mix/market/ticker", {
+        "symbol": BITGET_SYMBOL,
+        "productType": BITGET_PROD_TYPE,
+    })
     try:
-        price = float(r["data"]["last"])
+        price = float(r["data"][0]["lastPr"])
         state["current_price"] = price
         return price
-    except Exception:
+    except Exception as e:
+        log.warning(f"Ticker error: {e} | response: {r}")
         return state["current_price"]
 
 
@@ -153,32 +172,44 @@ def place_order_paper(side, qty, entry, sl, tp):
 
 
 def place_order_live(side, qty, sl, tp):
-    """Place real order on Bitget."""
+    """Place real order on Bitget v2 with leverage."""
+    # Set leverage first
+    bitget_signed("POST", "/api/v2/mix/account/set-leverage", {
+        "symbol":      BITGET_SYMBOL,
+        "productType": BITGET_PROD_TYPE,
+        "marginCoin":  "USDT",
+        "leverage":    str(LEVERAGE),
+        "holdSide":    "long" if side == "LONG" else "short",
+    })
     body = {
-        "symbol":          SYMBOL,
+        "symbol":          BITGET_SYMBOL,
+        "productType":     BITGET_PROD_TYPE,
+        "marginMode":      "isolated",
         "marginCoin":      "USDT",
-        "side":            "open_long" if side == "LONG" else "open_short",
-        "orderType":       "market",
         "size":            str(round(qty, 4)),
-        "presetTakeProfitPrice": str(round(tp, 2)),
-        "presetStopLossPrice":   str(round(sl, 2)),
+        "side":            "buy" if side == "LONG" else "sell",
+        "tradeSide":       "open",
+        "orderType":       "market",
+        "presetStopSurplusPrice": str(round(tp, 2)),
+        "presetStopLossPrice":    str(round(sl, 2)),
     }
-    r = bitget_signed("POST", "/api/mix/v1/order/placeOrder", body)
+    r = bitget_signed("POST", "/api/v2/mix/order/place-order", body)
     log.info(f"Order response: {r}")
     return r.get("data", {}).get("orderId", None)
 
 
 def close_position_live(side):
-    """Close open position on Bitget."""
-    close_side = "close_long" if side == "LONG" else "close_short"
+    """Close open position on Bitget v2."""
     body = {
-        "symbol":     SYMBOL,
-        "marginCoin": "USDT",
-        "side":       close_side,
-        "orderType":  "market",
-        "size":       str(state["position"]["qty"]),
+        "symbol":      BITGET_SYMBOL,
+        "productType": BITGET_PROD_TYPE,
+        "marginCoin":  "USDT",
+        "side":        "sell" if side == "LONG" else "buy",
+        "tradeSide":   "close",
+        "orderType":   "market",
+        "size":        str(state["position"]["qty"]),
     }
-    bitget_signed("POST", "/api/mix/v1/order/placeOrder", body)
+    bitget_signed("POST", "/api/v2/mix/order/place-order", body)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -442,8 +473,8 @@ def run_strategy():
 
     # ── Fetch price & candles ─────────────────────────────────────
     price      = get_ticker()
-    candles_1h = get_candles(SYMBOL, TIMEFRAME_1H, 150)
-    candles_1d = get_candles(SYMBOL, TIMEFRAME_1D, 5)
+    candles_1h = get_candles(TIMEFRAME_1H, 150)
+    candles_1d = get_candles(TIMEFRAME_1D, 5)
 
     if len(candles_1h) < 50 or len(candles_1d) < 2:
         state["last_signal"] = "Not enough candle data"
