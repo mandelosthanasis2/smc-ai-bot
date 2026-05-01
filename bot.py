@@ -115,9 +115,8 @@ def get_balance():
 def get_candles(granularity, limit=200):
     """
     Fetch OHLCV from Bitget v2 public API.
-    granularity: '1H' or '1D'
+    For daily uses 1Dutc (UTC midnight aligned).
     """
-    # Bitget v2 granularity format
     gran_map = {"1H": "1H", "1D": "1Dutc", "4H": "4H", "15m": "15m", "1m": "1m"}
     gran = gran_map.get(granularity, "1H")
     path = "/api/v2/mix/market/candles"
@@ -131,9 +130,8 @@ def get_candles(granularity, limit=200):
     candles = []
     raw = r.get("data", [])
     if not raw:
-        log.warning(f"No candle data returned. Response: {r}")
+        log.warning(f"No candle data. gran={gran} response: {str(r)[:200]}")
         return candles
-    # Bitget v2 returns newest first — reverse to get oldest first
     for c in reversed(raw):
         try:
             candles.append({
@@ -146,6 +144,9 @@ def get_candles(granularity, limit=200):
             })
         except Exception:
             pass
+    if granularity == "1D" and candles:
+        dates = [datetime.fromtimestamp(c["time"]/1000, tz=timezone.utc).strftime("%Y-%m-%d") for c in candles[-5:]]
+        log.info(f"Last 5 daily candles: {dates}")
     return candles
 
 
@@ -303,7 +304,8 @@ def build_daily_box(daily_candles):
             break
 
     if not yesterday:
-        yesterday = daily_candles[-2]   # fallback
+        yesterday = daily_candles[-2]
+        log.warning(f"Box fallback to index -2")
 
     box = {
         "high": yesterday["high"],
@@ -312,6 +314,7 @@ def build_daily_box(daily_candles):
         "date": datetime.fromtimestamp(yesterday["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
         "size": round(yesterday["high"] - yesterday["low"], 2),
     }
+    log.info(f"Box selected: date={box[chr(39)]date[chr(39)]} H={box[chr(39)]high[chr(39)]:.2f} L={box[chr(39)]low[chr(39)]:.2f}")
     state["box"] = box
     return box
 
