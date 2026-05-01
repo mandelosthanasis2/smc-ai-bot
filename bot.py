@@ -314,7 +314,7 @@ def build_daily_box(daily_candles):
         "date": datetime.fromtimestamp(yesterday["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
         "size": round(yesterday["high"] - yesterday["low"], 2),
     }
-    log.info(f"Box selected: date={box[chr(39)]date[chr(39)]} H={box[chr(39)]high[chr(39)]:.2f} L={box[chr(39)]low[chr(39)]:.2f}")
+    log.info("Box selected: date=" + str(box["date"]) + " H=" + str(round(box["high"],2)) + " L=" + str(round(box["low"],2)))
     state["box"] = box
     return box
 
