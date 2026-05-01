@@ -19,8 +19,8 @@ TRADING_MODE       = os.environ.get("TRADING_MODE", "PAPER")   # "PAPER" or "LIV
 SYMBOL         = "BTCUSDT"          # Bitget v2 symbol (no suffix needed)
 TIMEFRAME_1H   = "1H"
 TIMEFRAME_1D   = "1D"
-RISK_PER_TRADE = 0.02               # 2% risk per trade
-LEVERAGE       = int(os.environ.get("LEVERAGE", "1"))  # Set in Railway Variables (1-10)
+RISK_PER_TRADE = 0.02   # 2% risk per trade
+LEVERAGE       = 1      # Leverage (1x default — change here to increase: 1, 2, 3, 5, 10)
 
 # ── SMC STRATEGY RULES ───────────────────────────────────────────
 SMC_RULES = {
