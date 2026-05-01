@@ -117,7 +117,7 @@ def get_candles(granularity, limit=200):
     Fetch OHLCV from Bitget v2 public API.
     For daily uses 1Dutc (UTC midnight aligned).
     """
-    gran_map = {"1H": "1H", "1D": "1Dutc", "4H": "4H", "15m": "15m", "1m": "1m"}
+    gran_map = {"1H": "1H", "1D": "4H", "4H": "4H", "15m": "15m", "1m": "1m"}
     gran = gran_map.get(granularity, "1H")
     path = "/api/v2/mix/market/candles"
     params = {
@@ -283,38 +283,51 @@ def detect_fvg(candles):
 # PREVIOUS DAY BOX
 # ══════════════════════════════════════════════════════════════════
 
-def build_daily_box(daily_candles):
+def build_daily_box(candles_4h):
     """
-    Yesterday's High/Low = Primary POI zones.
-    Always use the most recent COMPLETED daily candle
-    (not the current incomplete one).
+    Build Previous Day High/Low using 4H candles grouped by UTC date.
+    Avoids Bitget 1D granularity issues (returns weekly instead of daily).
     """
-    if len(daily_candles) < 2:
+    if not candles_4h:
+        log.warning("No 4H candles for box")
         return None
 
     now_utc   = datetime.now(timezone.utc)
     today_str = now_utc.strftime("%Y-%m-%d")
 
-    # Find the most recent candle that is NOT today (i.e. completed)
-    yesterday = None
-    for c in reversed(daily_candles):
-        candle_date = datetime.fromtimestamp(c["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        if candle_date < today_str:
-            yesterday = c
+    # Group 4H candles by UTC date to reconstruct daily high/low
+    days = {}
+    for c in candles_4h:
+        d = datetime.fromtimestamp(c["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        if d not in days:
+            days[d] = {"high": c["high"], "low": c["low"]}
+        else:
+            days[d]["high"] = max(days[d]["high"], c["high"])
+            days[d]["low"]  = min(days[d]["low"],  c["low"])
+
+    sorted_dates = sorted(days.keys())
+    log.info("Reconstructed daily dates: " + str(sorted_dates[-7:]))
+
+    # Find most recent completed day (before today)
+    yesterday_date = None
+    for d in reversed(sorted_dates):
+        if d < today_str:
+            yesterday_date = d
             break
 
-    if not yesterday:
-        yesterday = daily_candles[-2]
-        log.warning(f"Box fallback to index -2")
+    if not yesterday_date:
+        log.warning("Could not find yesterday in 4H candles")
+        return None
 
+    y = days[yesterday_date]
     box = {
-        "high": yesterday["high"],
-        "low":  yesterday["low"],
-        "mid":  round((yesterday["high"] + yesterday["low"]) / 2, 2),
-        "date": datetime.fromtimestamp(yesterday["time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
-        "size": round(yesterday["high"] - yesterday["low"], 2),
+        "high": y["high"],
+        "low":  y["low"],
+        "mid":  round((y["high"] + y["low"]) / 2, 2),
+        "date": yesterday_date,
+        "size": round(y["high"] - y["low"], 2),
     }
-    log.info("Box selected: date=" + str(box["date"]) + " H=" + str(round(box["high"],2)) + " L=" + str(round(box["low"],2)))
+    log.info("Box: date=" + yesterday_date + " H=" + str(round(box["high"],2)) + " L=" + str(round(box["low"],2)))
     state["box"] = box
     return box
 
