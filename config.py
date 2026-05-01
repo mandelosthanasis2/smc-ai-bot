@@ -16,11 +16,11 @@ ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY",  "")
 TRADING_MODE       = os.environ.get("TRADING_MODE", "PAPER")   # "PAPER" or "LIVE"
 
 # ── TRADING SETTINGS ─────────────────────────────────────────────
-SYMBOL             = "BTCUSDT_UMCBL"   # Bitget USDT-margined perpetual
-TIMEFRAME_1H       = "1H"
-TIMEFRAME_1D       = "1D"
-RISK_PER_TRADE     = 0.02              # 2% risk per trade
-LEVERAGE           = 1                 # 1x = no leverage
+SYMBOL         = "BTCUSDT"          # Bitget v2 symbol (no suffix needed)
+TIMEFRAME_1H   = "1H"
+TIMEFRAME_1D   = "1D"
+RISK_PER_TRADE = 0.02               # 2% risk per trade
+LEVERAGE       = int(os.environ.get("LEVERAGE", "1"))  # Set in Railway Variables (1-10)
 
 # ── SMC STRATEGY RULES ───────────────────────────────────────────
 SMC_RULES = {
