@@ -583,11 +583,8 @@ def run_strategy():
     global balance_at_entry
     rules = SMC_RULES
 
-    # ── Session filter ─────────────────────────────────────────────
-    if not in_session():
-        state["last_signal"] = f"Outside session (UTC {datetime.now(timezone.utc).hour}:00)"
-        log.info(state["last_signal"])
-        return
+    # Session filter disabled — bot runs 24/7
+    pass
 
     # ── Fetch data ─────────────────────────────────────────────────
     price      = get_ticker()
@@ -661,19 +658,14 @@ def run_strategy():
         headlines          = fetch_news()
         score, summary     = ai_news_score(headlines, "SHORT", price, box)
 
-        if score <= rules["min_news_score"]:
-            ok = execute_trade("SHORT", price, sl, tp, qty, score, summary, bear_div)
-            if not ok:
-                state["last_signal"] = "SHORT — order failed"
-        else:
-            state["last_signal"] = f"SHORT blocked — AI score={score}"
-            send_telegram(
-                f"⚠️ SHORT setup found but blocked by AI\n"
-                f"Price: ${price:,.2f} | PDH: ${box['high']:,.2f}\n"
-                f"RSI: {rsi} | Divergence: {bear_div}\n"
-                f"News score: {score} | {summary[:60]}"
-            )
-            log.info(state["last_signal"])
+        # News is for your info only — does not block the trade
+        send_telegram(
+            f"📰 <b>News Update (SHORT)</b>\n"
+            f"Score: {score} | {summary[:80]}"
+        )
+        ok = execute_trade("SHORT", price, sl, tp, qty, score, summary, bear_div)
+        if not ok:
+            state["last_signal"] = "SHORT — order failed"
         return
 
     # ──────────────────────────────────────────────────────────────
@@ -707,19 +699,14 @@ def run_strategy():
         headlines      = fetch_news()
         score, summary = ai_news_score(headlines, "LONG", price, box)
 
-        if score >= rules["min_news_score"]:
-            ok = execute_trade("LONG", price, sl, tp, qty, score, summary, bull_div)
-            if not ok:
-                state["last_signal"] = "LONG — order failed"
-        else:
-            state["last_signal"] = f"LONG blocked — AI score={score}"
-            send_telegram(
-                f"⚠️ LONG setup found but blocked by AI\n"
-                f"Price: ${price:,.2f} | PDL: ${box['low']:,.2f}\n"
-                f"RSI: {rsi} | Divergence: {bull_div}\n"
-                f"News score: {score} | {summary[:60]}"
-            )
-            log.info(state["last_signal"])
+        # News is for your info only — does not block the trade
+        send_telegram(
+            f"📰 <b>News Update (LONG)</b>\n"
+            f"Score: {score} | {summary[:80]}"
+        )
+        ok = execute_trade("LONG", price, sl, tp, qty, score, summary, bull_div)
+        if not ok:
+            state["last_signal"] = "LONG — order failed"
         return
 
     # ── No setup ───────────────────────────────────────────────────
