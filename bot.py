@@ -560,13 +560,17 @@ def run_strategy():
              f"Liq_bull={liq_bull} Liq_bear={liq_bear}")
 
     # ─────────────────────────────────────────────────────────────
-    # SHORT SETUP: price at PDH + RSI overbought + SMC confirmation
+    # SHORT SETUP: price at/above PDH + RSI overbought
+    # SMC confirmation is bonus but not required
     # ─────────────────────────────────────────────────────────────
-    at_pdh  = near_level(price, box["high"])
-    rsi_ob  = rsi > rules["pdbox_short_rsi_threshold"]
+    at_pdh       = near_level(price, box["high"]) or price > box["high"]
+    rsi_ob       = rsi > rules["pdbox_short_rsi_threshold"]
     smc_ok_short = liq_bear or bos_bear or fvg_bear
+    # Entry: RSI extreme at PDH level is enough (SMC adds confidence)
+    short_ok = at_pdh and rsi_ob
 
-    if at_pdh and rsi_ob and smc_ok_short:
+    if short_ok:
+        log.info(f"SHORT conditions: at_pdh={at_pdh} rsi={rsi} smc={smc_ok_short}")
         log.info("SHORT setup found — fetching news for AI analysis...")
         headlines  = fetch_news()
         score, summary = ai_news_score(headlines, "SHORT", price, box)
@@ -600,13 +604,17 @@ def run_strategy():
         return
 
     # ─────────────────────────────────────────────────────────────
-    # LONG SETUP: price at PDL + RSI oversold + SMC confirmation
+    # LONG SETUP: price at/below PDL + RSI oversold
+    # SMC confirmation is bonus but not required
     # ─────────────────────────────────────────────────────────────
-    at_pdl  = near_level(price, box["low"])
-    rsi_os  = rsi < rules["pdbox_long_rsi_threshold"]
+    at_pdl      = near_level(price, box["low"]) or price < box["low"]
+    rsi_os      = rsi < rules["pdbox_long_rsi_threshold"]
     smc_ok_long = liq_bull or bos_bull or fvg_bull
+    # Entry: RSI extreme at PDL level is enough
+    long_ok = at_pdl and rsi_os
 
-    if at_pdl and rsi_os and smc_ok_long:
+    if long_ok:
+        log.info(f"LONG conditions: at_pdl={at_pdl} rsi={rsi} smc={smc_ok_long}")
         log.info("LONG setup found — fetching news for AI analysis...")
         headlines  = fetch_news()
         score, summary = ai_news_score(headlines, "LONG", price, box)
@@ -673,7 +681,7 @@ def bot_loop():
 
         # Sleep until next hour close
         now     = datetime.now(timezone.utc)
-        cycle_seconds = int(os.environ.get("CYCLE_SECONDS", "300"))  # default 5 min
+        cycle_seconds = int(os.environ.get("CYCLE_SECONDS", "60"))   # default 1 min
         log.info(f"Next cycle in {cycle_seconds}s")
         time.sleep(cycle_seconds)
 
