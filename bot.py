@@ -17,6 +17,20 @@ from datetime import datetime, timezone
 import anthropic
 from config import *
 
+# ── TELEGRAM NOTIFICATIONS ───────────────────────────────────────
+def send_telegram(msg):
+    """Send message to Telegram. Requires TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Railway Variables."""
+    token   = os.environ.get("TELEGRAM_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        url  = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = {"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}
+        requests.post(url, data=data, timeout=5)
+    except Exception as e:
+        log.warning(f"Telegram error: {e}")
+
 # ── LOGGING ──────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -569,10 +583,19 @@ def run_strategy():
             ok = execute_trade("SHORT", entry, sl, tp, qty, score, summary)
             if ok:
                 log.info("SHORT opened!")
+                send_telegram(
+                    "🔴 <b>SHORT OPENED</b>\n"
+                    f"Entry: ${entry:,.2f}\n"
+                    f"TP: ${tp:,.2f}\n"
+                    f"SL: ${sl:,.2f}\n"
+                    f"AI News Score: {score}\n"
+                    f"📰 {summary[:80]}"
+                )
             else:
                 state["last_signal"] = "SHORT — order failed"
         else:
             state["last_signal"] = f"SHORT blocked — AI score={score} ({summary[:40]})"
+            send_telegram(f"⚠️ SHORT setup found but blocked by AI\nNews score: {score}\n{summary[:80]}")
             log.info(state["last_signal"])
         return
 
@@ -600,10 +623,19 @@ def run_strategy():
             ok = execute_trade("LONG", entry, sl, tp, qty, score, summary)
             if ok:
                 log.info("LONG opened!")
+                send_telegram(
+                    "🟢 <b>LONG OPENED</b>\n"
+                    f"Entry: ${entry:,.2f}\n"
+                    f"TP: ${tp:,.2f}\n"
+                    f"SL: ${sl:,.2f}\n"
+                    f"AI News Score: {score}\n"
+                    f"📰 {summary[:80]}"
+                )
             else:
                 state["last_signal"] = "LONG — order failed"
         else:
             state["last_signal"] = f"LONG blocked — AI score={score} ({summary[:40]})"
+            send_telegram(f"⚠️ LONG setup found but blocked by AI\nNews score: {score}\n{summary[:80]}")
             log.info(state["last_signal"])
         return
 
@@ -621,6 +653,13 @@ def bot_loop():
     log.info("  SMC AI BOT — Bitget | Railway")
     log.info(f"  Mode: {TRADING_MODE}")
     log.info("═══════════════════════════════════")
+    send_telegram(
+        "⚡ <b>SMC AI Bot Started</b>\n"
+        f"Mode: {TRADING_MODE}\n"
+        f"Symbol: BTC/USDT Perpetual\n"
+        f"Strategy: Previous Day Box + SMC\n"
+        "Bot is now running 24/7 🚀"
+    )
 
     while state["running"]:
         try:
@@ -634,9 +673,9 @@ def bot_loop():
 
         # Sleep until next hour close
         now     = datetime.now(timezone.utc)
-        wait    = (60 - now.minute) * 60 - now.second
-        log.info(f"Next cycle in {60 - now.minute}m {60 - now.second}s")
-        time.sleep(max(wait, 60))
+        cycle_seconds = int(os.environ.get("CYCLE_SECONDS", "300"))  # default 5 min
+        log.info(f"Next cycle in {cycle_seconds}s")
+        time.sleep(cycle_seconds)
 
 
 # Start bot in background thread so dashboard can run in main thread
