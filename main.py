@@ -251,6 +251,7 @@ def index():
         losses        = losses,
         win_rate      = round(wins / total * 100) if total > 0 else 0,
         rsi           = s["current_rsi"],
+        divergence    = s.get("last_divergence", False),
         signal        = s["last_signal"],
         signal_time   = s["last_signal_time"],
         last_cycle    = s["last_cycle"],
