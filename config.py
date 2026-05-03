@@ -24,13 +24,13 @@ LEVERAGE       = 1      # Leverage (1x default — change here to increase: 1, 2
 
 # ── SMC STRATEGY RULES ───────────────────────────────────────────
 SMC_RULES = {
-    "pdbox_short_rsi_threshold": 75,
-    "pdbox_long_rsi_threshold":  25,
-    "pdbox_proximity_pct":       0.005,
+    "pdbox_short_rsi_threshold": 70,   # SHORT if RSI > 70 at PDH
+    "pdbox_long_rsi_threshold":  30,   # LONG if RSI < 30 at PDL
+    "pdbox_proximity_pct":       0.012, # 1.2% proximity to PDH/PDL (wider)
     "risk_reward_ratio":         2.0,
     "tp_at_midbox":              True,
-    "require_liquidity_sweep":   True,
-    "require_bos":               True,
+    "require_liquidity_sweep":   False, # Not required — RSI extreme is enough
+    "require_bos":               False, # Not required — price at level is enough
     "use_ai_news_filter":        True,
     "min_news_score":            0,
     "trade_sessions":            ["london", "new_york"],
