@@ -1,8 +1,6 @@
 """
-main.py — Entry point for Railway deployment
-Starts the bot in a background thread + serves the web dashboard
-Run locally: python main.py
-Deploy: push to Railway (uses Procfile)
+main.py — SMC AI Bot Dashboard v2
+Beautiful UI with TradingView chart embedded
 """
 
 from flask import Flask, render_template_string, jsonify
@@ -10,13 +8,7 @@ from bot import state, bot_thread
 from config import PORT
 
 app = Flask(__name__)
-
-# ── Start bot thread ──────────────────────────────────────────────
 bot_thread.start()
-
-# ══════════════════════════════════════════════════════════════════
-# DASHBOARD HTML
-# ══════════════════════════════════════════════════════════════════
 
 DASHBOARD = """
 <!DOCTYPE html>
@@ -24,212 +16,537 @@ DASHBOARD = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="20">
-<title>SMC AI Bot — Bitget</title>
+<title>SMC AI Bot</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: #060b18;
-  color: #c8d8f0;
-  font-family: 'Courier New', monospace;
-  padding: 16px;
-  max-width: 900px;
-  margin: 0 auto;
-}
-h1   { font-size: 16px; color: #f0c040; letter-spacing: 3px; margin-bottom: 4px; }
-.sub { font-size: 10px; color: #2a4a6f; letter-spacing: 2px; margin-bottom: 18px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.card { background: #0a1221; border: 1px solid #142038; border-radius: 10px; padding: 12px 14px; }
-.lbl  { font-size: 9px; color: #3a5a8f; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 5px; }
-.val  { font-size: 18px; font-weight: bold; }
-.val.sm { font-size: 13px; }
-.green  { color: #00ff88; }
-.red    { color: #ff4466; }
-.yellow { color: #f0c040; }
-.gray   { color: #4a6fa5; }
-.purple { color: #a855f7; }
-.section { font-size: 10px; color: #3a5a8f; letter-spacing: 3px; text-transform: uppercase; margin: 18px 0 8px; }
-.box-zones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
-.zone { border-radius: 10px; padding: 12px; text-align: center; }
-.zone-short { background: #ff446610; border: 1px solid #ff446625; }
-.zone-mid   { background: #f0c04010; border: 1px solid #f0c04025; }
-.zone-long  { background: #00ff8810; border: 1px solid #00ff8825; }
-.pos-box { background: #0a1221; border: 1px solid #f0c04030; border-radius: 10px; padding: 14px; margin-bottom: 16px; }
-.pos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-.pos-item { display: flex; justify-content: space-between; border-top: 1px solid #0e1f35; padding-top: 6px; }
-.news-box { background: #0a1221; border: 1px solid #142038; border-radius: 10px; padding: 14px; margin-bottom: 16px; }
-.news-score { display: inline-block; padding: 2px 10px; border-radius: 5px; font-size: 11px; margin-left: 8px; }
-.news-score.pos { background: #00ff8820; color: #00ff88; }
-.news-score.neg { background: #ff446620; color: #ff4466; }
-.news-score.neu { background: #4a6fa520; color: #4a6fa5; }
-.news-summary { font-size: 11px; color: #6a8fbf; margin-top: 6px; line-height: 1.5; }
-.headlines { margin-top: 8px; }
-.hl-item { font-size: 10px; color: #2a4a6f; padding: 3px 0; border-bottom: 1px solid #0a1520; }
-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-th { background: #0d1829; color: #3a5a8f; text-align: left; padding: 7px 9px; border-bottom: 1px solid #142038; }
-td { padding: 7px 9px; border-bottom: 1px solid #0a1520; }
-.pill { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 10px; }
-.pill.long  { background: #00ff8820; color: #00ff88; }
-.pill.short { background: #ff446620; color: #ff4466; }
-.pill.win   { background: #00ff8820; color: #00ff88; }
-.pill.loss  { background: #ff446620; color: #ff4466; }
-.errors { background: #1a0808; border: 1px solid #ff446630; border-radius: 8px; padding: 10px; margin-bottom: 14px; }
-.err-item { font-size: 10px; color: #ff4466; padding: 2px 0; }
-.footer { text-align: center; font-size: 9px; color: #0f2035; letter-spacing: 2px; margin-top: 16px; }
-.mode-badge { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 10px;
-              background: #f0c04020; color: #f0c040; border: 1px solid #f0c04040; }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0e1a;
+    --bg2:      #111827;
+    --bg3:      #1a2235;
+    --border:   #1e2d45;
+    --border2:  #243550;
+    --text:     #e2e8f0;
+    --text2:    #94a3b8;
+    --text3:    #475569;
+    --green:    #10b981;
+    --green2:   #059669;
+    --red:      #ef4444;
+    --red2:     #dc2626;
+    --yellow:   #f59e0b;
+    --blue:     #3b82f6;
+    --purple:   #8b5cf6;
+    --glow-g:   0 0 20px rgba(16,185,129,0.15);
+    --glow-r:   0 0 20px rgba(239,68,68,0.15);
+    --glow-y:   0 0 20px rgba(245,158,11,0.15);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── LAYOUT ── */
+  .app { display: grid; grid-template-columns: 1fr 340px; grid-template-rows: auto 1fr; min-height: 100vh; }
+  .main-col { grid-column: 1; display: flex; flex-direction: column; }
+  .side-col  { grid-column: 2; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  .logo span { color: var(--green); }
+  .badge {
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .badge-paper  { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+  .badge-live   { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+  .badge-green  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+  .badge-red    { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+  .badge-gray   { background: rgba(71,85,105,0.3);   color: var(--text2);  border: 1px solid var(--border); }
+  .topbar-right { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text3); }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── CHART AREA ── */
+  .chart-wrap {
+    flex: 1;
+    background: var(--bg);
+    min-height: 460px;
+    position: relative;
+  }
+  .chart-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .tf-btn {
+    font-size: 11px; font-weight: 500; padding: 4px 10px;
+    border-radius: 6px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--text2);
+    transition: all 0.15s;
+  }
+  .tf-btn:hover, .tf-btn.active {
+    background: var(--blue); color: white; border-color: var(--blue);
+  }
+  .chart-label { font-size: 11px; color: var(--text3); margin-left: auto; }
+  #tv-chart { width: 100%; height: 420px; }
+
+  /* ── SIDE PANEL ── */
+  .side-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .side-title {
+    font-size: 10px; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+  }
+
+  /* ── PRICE HEADER ── */
+  .price-display { padding: 16px; border-bottom: 1px solid var(--border); }
+  .price-symbol { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .price-main { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+  .price-change { font-size: 12px; margin-top: 2px; }
+
+  /* ── STATS GRID ── */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .stat-value { font-size: 16px; font-weight: 600; }
+
+  /* ── SIGNAL CARD ── */
+  .signal-card {
+    border-radius: 10px; padding: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+  }
+  .signal-type {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 700; padding: 5px 14px;
+    border-radius: 8px; margin-bottom: 10px;
+  }
+  .signal-long  { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+  .signal-short { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+  .signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2); border: 1px solid var(--border); }
+  .signal-text  { font-size: 11px; color: var(--text2); line-height: 1.6; }
+
+  /* ── BOX LEVELS ── */
+  .box-levels { display: flex; flex-direction: column; gap: 6px; }
+  .level-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-radius: 8px;
+  }
+  .level-pdh { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.2); }
+  .level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+  .level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+  .level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .level-desc { font-size: 9px; opacity: 0.6; margin-top: 1px; }
+  .level-price { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* ── POSITION CARD ── */
+  .pos-card {
+    background: var(--bg3); border-radius: 10px; padding: 14px;
+    border: 1px solid rgba(245,158,11,0.3);
+  }
+  .pos-row {
+    display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .pos-row:last-child { border-bottom: none; }
+  .pos-key { color: var(--text2); }
+
+  /* ── RSI BAR ── */
+  .rsi-wrap { margin-top: 8px; }
+  .rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .rsi-bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+
+  /* ── NEWS ── */
+  .news-score-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; margin-left: 6px;
+  }
+  .news-summary { font-size: 11px; color: var(--text2); margin-top: 6px; line-height: 1.5; }
+  .news-hl { font-size: 10px; color: var(--text3); padding: 4px 0; border-bottom: 1px solid var(--border); }
+
+  /* ── TRADE TABLE ── */
+  .trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 500; }
+  .trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
+  .pill {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+  }
+  .pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
+  .pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
+  .pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
+  .pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
+  .pill-div   { background: rgba(245,158,11,0.15); color: var(--yellow);}
+
+  /* ── ERRORS ── */
+  .error-item { font-size: 10px; color: var(--red); padding: 3px 0; }
+
+  /* ── BOTTOM BAR ── */
+  .bottombar {
+    padding: 10px 20px;
+    background: var(--bg2); border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10px; color: var(--text3);
+  }
+
+  /* ── MOBILE ── */
+  @media (max-width: 768px) {
+    .app { grid-template-columns: 1fr; }
+    .side-col { border-left: none; border-top: 1px solid var(--border); }
+    #tv-chart { height: 280px; }
+  }
+
+  .divider { width: 1px; height: 16px; background: var(--border); }
+  .text-green { color: var(--green); }
+  .text-red   { color: var(--red);   }
+  .text-yellow{ color: var(--yellow);}
+  .text-blue  { color: var(--blue);  }
+  .text-gray  { color: var(--text2); }
+  .text-dim   { color: var(--text3); }
 </style>
 </head>
 <body>
 
-<h1>⚡ SMC AI TRADING BOT</h1>
-<div class="sub">
-  BITGET · BTC/USDT PERP · {{ leverage }}x LEVERAGE · AUTO-REFRESH 20s
-  <span class="mode-badge">{{ mode }}</span>
-</div>
+<div class="app">
 
-<!-- STATS -->
-<div class="grid">
-  <div class="card">
-    <div class="lbl">Balance</div>
-    <div class="val green">${{ "%.2f"|format(balance) }}</div>
-  </div>
-  <div class="card">
-    <div class="lbl">Total P&L</div>
-    <div class="val {{ 'green' if pnl >= 0 else 'red' }}">
-      {{ '+' if pnl >= 0 else '' }}${{ "%.2f"|format(pnl) }}
-    </div>
-  </div>
-  <div class="card">
-    <div class="lbl">Win Rate</div>
-    <div class="val yellow">{{ win_rate }}%</div>
-  </div>
-  <div class="card">
-    <div class="lbl">W / L</div>
-    <div class="val gray">{{ wins }}W {{ losses }}L</div>
-  </div>
-  <div class="card">
-    <div class="lbl">RSI (1H)</div>
-    <div class="val {{ 'red' if rsi > 70 else 'green' if rsi < 30 else 'gray' }}">{{ rsi }}</div>
-  </div>
-  <div class="card">
-    <div class="lbl">Last Cycle</div>
-    <div class="val sm gray">{{ last_cycle }}</div>
-  </div>
-</div>
+  <!-- ══ MAIN COLUMN ══ -->
+  <div class="main-col">
 
-<!-- SIGNAL -->
-<div class="card" style="margin-bottom:16px; border-color: {{ '#00ff8840' if 'LONG' in signal else '#ff446640' if 'SHORT' in signal else '#142038' }}">
-  <div class="lbl">Current Signal</div>
-  <div class="val sm" style="color: {{ '#00ff88' if 'LONG' in signal and 'block' not in signal.lower() else '#ff4466' if 'SHORT' in signal and 'block' not in signal.lower() else '#4a6fa5' }}">
-    {{ signal }}
-  </div>
-  {% if signal_time %}<div style="font-size:10px; color:#2a4a6f; margin-top:4px;">{{ signal_time }}</div>{% endif %}
-</div>
-
-<!-- BOX -->
-{% if box %}
-<div class="section">📦 Previous Day Box — {{ box.date }}</div>
-<div class="box-zones">
-  <div class="zone zone-short">
-    <div class="lbl" style="color:#ff4466;">SHORT ZONE</div>
-    <div class="val red">${{ "%.2f"|format(box.high) }}</div>
-    <div style="font-size:9px; color:#ff446680; margin-top:3px;">RSI > 75 + SMC</div>
-  </div>
-  <div class="zone zone-mid">
-    <div class="lbl" style="color:#f0c040;">TP TARGET</div>
-    <div class="val yellow">${{ "%.2f"|format(box.mid) }}</div>
-    <div style="font-size:9px; color:#f0c04080; margin-top:3px;">Both setups</div>
-  </div>
-  <div class="zone zone-long">
-    <div class="lbl" style="color:#00ff88;">LONG ZONE</div>
-    <div class="val green">${{ "%.2f"|format(box.low) }}</div>
-    <div style="font-size:9px; color:#00ff8880; margin-top:3px;">RSI < 25 + SMC</div>
-  </div>
-</div>
-<div style="font-size:10px; color:#2a4a6f; margin-bottom:16px;">
-  Box size: ${{ "%.2f"|format(box.size) }} &nbsp;·&nbsp; R/R 1:2 &nbsp;·&nbsp; Risk 2%/trade &nbsp;·&nbsp; Current price: <span class="yellow">${{ "%.2f"|format(current_price) }}</span>
-</div>
-{% endif %}
-
-<!-- OPEN POSITION -->
-{% if position %}
-<div class="pos-box">
-  <div class="lbl">Open Position
-    <span class="pill {{ 'long' if position.type == 'LONG' else 'short' }}">{{ position.type }}</span>
-  </div>
-  <div class="pos-grid">
-    <div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">Entry</span> <span>${{ "%.2f"|format(position.entry) }}</span></div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">Take Profit</span> <span class="green">${{ "%.2f"|format(position.tp) }}</span></div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">Stop Loss</span> <span class="red">${{ "%.2f"|format(position.sl) }}</span></div>
-    </div>
-    <div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">Qty (BTC)</span> <span>{{ position.qty }}</span></div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">AI Score</span>
-        <span class="{{ 'green' if position.news_score > 0 else 'red' if position.news_score < 0 else 'gray' }}">{{ position.news_score }}</span>
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="logo">SMC <span>AI</span> Bot</div>
+        <span class="badge {{ 'badge-paper' if mode == 'PAPER' else 'badge-live' }}">{{ mode }}</span>
+        <span class="badge badge-gray">BTC/USDT PERP</span>
+        <span class="badge badge-gray">BITGET</span>
+        {% if position %}
+        <span class="badge {{ 'badge-green' if position.type == 'LONG' else 'badge-red' }}">
+          {{ position.type }} OPEN
+        </span>
+        {% endif %}
       </div>
-      <div class="pos-item"><span class="gray" style="font-size:10px;">Opened</span> <span style="font-size:10px;">{{ position.time }}</span></div>
+      <div class="topbar-right">
+        <div class="pulse"></div>
+        <span>LIVE</span>
+        <div class="divider"></div>
+        <span>{{ last_cycle }}</span>
+      </div>
     </div>
+
+    <!-- CHART TOOLBAR -->
+    <div class="chart-toolbar">
+      <button class="tf-btn" onclick="setTF('1')">1m</button>
+      <button class="tf-btn" onclick="setTF('5')">5m</button>
+      <button class="tf-btn" onclick="setTF('15')">15m</button>
+      <button class="tf-btn active" onclick="setTF('60')" id="tf-60">1H</button>
+      <button class="tf-btn" onclick="setTF('240')">4H</button>
+      <button class="tf-btn" onclick="setTF('D')">1D</button>
+      <span class="chart-label">powered by TradingView</span>
+    </div>
+
+    <!-- TRADINGVIEW CHART -->
+    <div class="chart-wrap">
+      <div id="tv-chart"></div>
+    </div>
+
+    <!-- BOTTOM BAR -->
+    <div class="bottombar">
+      <span>⚠ PAPER TRADING · NO REAL MONEY · EDUCATIONAL USE ONLY</span>
+      <span>Auto-refresh 20s</span>
+    </div>
+
   </div>
-  {% if position.news_summary %}
-  <div class="news-summary" style="margin-top:8px;">🤖 {{ position.news_summary }}</div>
-  {% endif %}
-</div>
-{% endif %}
 
-<!-- AI NEWS -->
-<div class="news-box">
-  <div class="lbl">
-    🤖 AI News Analysis
-    <span class="news-score {{ 'pos' if news_score > 0 else 'neg' if news_score < 0 else 'neu' }}">
-      Score: {{ news_score }}
-    </span>
-  </div>
-  {% if news_summary %}
-  <div class="news-summary">{{ news_summary }}</div>
-  {% endif %}
-  {% if headlines %}
-  <div class="headlines">
-    {% for h in headlines[:8] %}
-    <div class="hl-item">• {{ h }}</div>
-    {% endfor %}
-  </div>
-  {% endif %}
-</div>
+  <!-- ══ SIDE COLUMN ══ -->
+  <div class="side-col">
 
-<!-- ERRORS -->
-{% if errors %}
-<div class="errors">
-  <div class="lbl" style="color:#ff4466;">Recent Errors</div>
-  {% for e in errors[-5:] %}
-  <div class="err-item">{{ e }}</div>
-  {% endfor %}
-</div>
-{% endif %}
+    <!-- PRICE -->
+    <div class="price-display">
+      <div class="price-symbol">BTCUSDT · Perpetual</div>
+      <div class="price-main {{ 'text-green' if current_price > 0 else 'text-gray' }}">
+        ${{ "{:,.2f}".format(current_price) }}
+      </div>
+      <div class="price-change">
+        <span class="badge {{ 'badge-green' if rsi < 30 else 'badge-red' if rsi > 70 else 'badge-gray' }}">
+          RSI {{ rsi }}
+        </span>
+        {% if divergence %}
+        <span class="badge badge-paper" style="margin-left:4px;">📊 Divergence!</span>
+        {% endif %}
+      </div>
+    </div>
 
-<!-- TRADE HISTORY -->
-{% if trades %}
-<div class="section">📋 Trade History</div>
-<div style="background:#0a1221; border:1px solid #142038; border-radius:10px; overflow:hidden; margin-bottom:16px;">
-  <table>
-    <tr><th>Time</th><th>Type</th><th>Entry</th><th>Close</th><th>P&L</th><th>Result</th><th>AI</th></tr>
-    {% for t in trades[-30:]|reverse %}
-    <tr>
-      <td class="gray">{{ t.time }}</td>
-      <td><span class="pill {{ 'long' if t.type == 'LONG' else 'short' }}">{{ t.type }}</span></td>
-      <td>${{ "%.2f"|format(t.entry) }}</td>
-      <td>${{ "%.2f"|format(t.close) }}</td>
-      <td class="{{ 'green' if t.pnl >= 0 else 'red' }}">{{ '+' if t.pnl >= 0 else '' }}${{ "%.2f"|format(t.pnl) }}</td>
-      <td><span class="pill {{ 'win' if t.result == 'WIN' else 'loss' }}">{{ t.result }}</span></td>
-      <td class="{{ 'green' if t.news_score > 0 else 'red' if t.news_score < 0 else 'gray' }}">{{ t.news_score }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-{% endif %}
+    <!-- STATS -->
+    <div class="side-section">
+      <div class="side-title">Performance</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Balance</div>
+          <div class="stat-value text-green">${{ "{:,.0f}".format(balance) }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total P&L</div>
+          <div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}">
+            {{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Win Rate</div>
+          <div class="stat-value text-yellow">{{ win_rate }}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">W / L</div>
+          <div class="stat-value text-gray">{{ wins }}W · {{ losses }}L</div>
+        </div>
+      </div>
 
-<div class="footer">⚠ PAPER TRADING · NO REAL MONEY · FOR EDUCATIONAL USE · AUTO-REFRESH 20s</div>
+      <!-- RSI Bar -->
+      <div class="rsi-wrap">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:10px;">
+          <span>RSI (14)</span><span>{{ rsi }}</span>
+        </div>
+        <div class="rsi-bar-bg">
+          <div class="rsi-bar-fill" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:2px;">
+          <span>0</span><span>30</span><span>70</span><span>100</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIGNAL -->
+    <div class="side-section">
+      <div class="side-title">Current Signal</div>
+      <div class="signal-card">
+        {% if 'LONG' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
+          <div class="signal-type signal-long">▲ LONG</div>
+        {% elif 'SHORT' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
+          <div class="signal-type signal-short">▼ SHORT</div>
+        {% elif 'HOLDING' in signal %}
+          <div class="signal-type signal-wait">◆ {{ position.type if position else 'HOLDING' }}</div>
+        {% else %}
+          <div class="signal-type signal-wait">◌ WAIT</div>
+        {% endif %}
+        <div class="signal-text">{{ signal }}</div>
+        {% if signal_time %}
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;">{{ signal_time }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- PREVIOUS DAY BOX -->
+    {% if box %}
+    <div class="side-section">
+      <div class="side-title">Previous Day Box · {{ box.date }}</div>
+      <div class="box-levels">
+        <div class="level-row level-pdh">
+          <div>
+            <div class="level-name text-red">PDH · Short Zone</div>
+            <div class="level-desc">RSI > 70 → Sell</div>
+          </div>
+          <div class="level-price text-red">${{ "{:,.2f}".format(box.high) }}</div>
+        </div>
+        <div class="level-row level-mid">
+          <div>
+            <div class="level-name text-yellow">MID · Take Profit</div>
+            <div class="level-desc">TP for both setups</div>
+          </div>
+          <div class="level-price text-yellow">${{ "{:,.2f}".format(box.mid) }}</div>
+        </div>
+        <div class="level-row level-pdl">
+          <div>
+            <div class="level-name text-green">PDL · Long Zone</div>
+            <div class="level-desc">RSI < 30 → Buy</div>
+          </div>
+          <div class="level-price text-green">${{ "{:,.2f}".format(box.low) }}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;gap:12px;">
+        <span>Size: ${{ "{:,.0f}".format(box.size) }}</span>
+        <span>R/R: 1:2</span>
+        <span>Risk: 2% (4% w/ div)</span>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- OPEN POSITION -->
+    {% if position %}
+    <div class="side-section">
+      <div class="side-title">Open Position</div>
+      <div class="pos-card">
+        <div class="pos-row">
+          <span class="pos-key">Type</span>
+          <span class="pill {{ 'pill-long' if position.type == 'LONG' else 'pill-short' }}">
+            {{ position.type }}
+          </span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Entry</span>
+          <span>${{ "{:,.2f}".format(position.entry) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Take Profit</span>
+          <span class="text-green">${{ "{:,.2f}".format(position.tp) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Stop Loss</span>
+          <span class="text-red">${{ "{:,.2f}".format(position.sl) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Size (BTC)</span>
+          <span>{{ position.qty }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Divergence</span>
+          <span>{% if position.get('has_divergence') %}<span class="pill pill-div">🔥 DOUBLE</span>{% else %}Normal{% endif %}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">AI Score</span>
+          <span class="{{ 'text-green' if position.news_score > 0 else 'text-red' if position.news_score < 0 else 'text-gray' }}">
+            {{ position.news_score }}
+          </span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Opened</span>
+          <span class="text-dim">{{ position.time }}</span>
+        </div>
+        {% if position.news_summary %}
+        <div style="margin-top:8px;font-size:10px;color:var(--text2);line-height:1.5;">
+          📰 {{ position.news_summary[:100] }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- AI NEWS -->
+    <div class="side-section">
+      <div class="side-title">
+        AI News Analysis
+        <span class="news-score-badge {{ 'badge-green' if news_score > 0 else 'badge-red' if news_score < 0 else 'badge-gray' }}">
+          Score: {{ news_score }}
+        </span>
+      </div>
+      {% if news_summary %}
+      <div class="news-summary">{{ news_summary }}</div>
+      {% endif %}
+      {% for h in headlines[:6] %}
+      <div class="news-hl">• {{ h }}</div>
+      {% endfor %}
+    </div>
+
+    <!-- ERRORS -->
+    {% if errors %}
+    <div class="side-section">
+      <div class="side-title" style="color:var(--red);">Recent Errors</div>
+      {% for e in errors[-3:] %}
+      <div class="error-item">{{ e }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- TRADE HISTORY -->
+    {% if trades %}
+    <div class="side-section">
+      <div class="side-title">Trade History</div>
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>P&L</th>
+            <th>Result</th>
+            <th>Div</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in trades[-15:]|reverse %}
+          <tr>
+            <td class="text-dim">{{ t.time[5:16] }}</td>
+            <td><span class="pill {{ 'pill-long' if t.type == 'LONG' else 'pill-short' }}">{{ t.type }}</span></td>
+            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">
+              {{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}
+            </td>
+            <td><span class="pill {{ 'pill-win' if t.result == 'WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
+            <td>{% if t.get('divergence') %}<span class="text-yellow">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+  </div><!-- end side-col -->
+</div><!-- end app -->
+
+<!-- TRADINGVIEW WIDGET SCRIPT -->
+<script>
+let currentTF = '60';
+
+function setTF(tf) {
+  currentTF = tf;
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadChart(tf);
+}
+
+function loadChart(interval) {
+  const container = document.getElementById('tv-chart');
+  container.innerHTML = '';
+
+  const script = document.createElement('script');
+  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  script.async = true;
+  script.innerHTML = JSON.stringify({
+    "autosize": true,
+    "symbol": "BITGET:BTCUSDT.P",
+    "interval": interval,
+    "timezone": "Etc/UTC",
+    "theme": "dark",
+    "style": "1",
+    "locale": "en",
+    "backgroundColor": "#0a0e1a",
+    "gridColor": "rgba(30,45,69,0.5)",
+    "hide_top_toolbar": false,
+    "hide_legend": false,
+    "save_image": false,
+    "studies": [
+      "RSI@tv-basicstudies",
+      "VWAP@tv-basicstudies"
+    ],
+    "support_host": "https://www.tradingview.com"
+  });
+
+  const widget = document.createElement('div');
+  widget.className = 'tradingview-widget-container__widget';
+  widget.style.height = '100%';
+  widget.style.width = '100%';
+  container.appendChild(widget);
+  container.appendChild(script);
+}
+
+// Load chart on page ready
+loadChart('60');
+
+// Auto-refresh every 20 seconds
+setTimeout(() => location.reload(), 20000);
+</script>
 </body>
 </html>
 """
@@ -237,14 +554,13 @@ td { padding: 7px 9px; border-bottom: 1px solid #0a1520; }
 
 @app.route("/")
 def index():
-    s    = state
-    wins = s["wins"]
+    s      = state
+    wins   = s["wins"]
     losses = s["losses"]
     total  = wins + losses
     return render_template_string(
         DASHBOARD,
         mode          = s["mode"],
-        leverage      = s.get("leverage", 1),
         balance       = s["balance"],
         pnl           = s["pnl_total"],
         wins          = wins,
@@ -273,6 +589,5 @@ def api():
 
 if __name__ == "__main__":
     print(f"\n🚀 SMC AI Bot starting on port {PORT}")
-    print(f"   Mode: {state['mode']}")
     print(f"   Dashboard: http://localhost:{PORT}\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
