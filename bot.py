@@ -647,13 +647,16 @@ def run_strategy():
     # SHORT SETUP
     # Conditions: price at/above PDH + RSI > 70
     # SL: nearest 4H resistance + 0.3% buffer
-    # TP: MID of box
+    # TP: MID of box (MUST be below entry for SHORT)
     # Size: x2 if bearish divergence
     # ──────────────────────────────────────────────────────────────
-    at_pdh = near_level(price, box["high"]) or price > box["high"]
+    # Price is near PDH = within 1.2% ABOVE (not below)
+    at_pdh = (price >= box["high"] * 0.988) and (price <= box["high"] * 1.02)
     rsi_ob = rsi > rules["pdbox_short_rsi_threshold"]
+    # Extra safety: MID must be below current price for SHORT to make sense
+    short_makes_sense = box["mid"] < price
 
-    if at_pdh and rsi_ob:
+    if at_pdh and rsi_ob and short_makes_sense:
         log.info(f"SHORT setup: price={price:.2f} PDH={box['high']:.2f} RSI={rsi}")
 
         # SL at nearest 4H resistance above entry + 0.3% buffer
@@ -698,13 +701,16 @@ def run_strategy():
     # LONG SETUP
     # Conditions: price at/below PDL + RSI < 30
     # SL: nearest 4H support - 0.3% buffer
-    # TP: MID of box
+    # TP: MID of box (MUST be above entry for LONG)
     # Size: x2 if bullish divergence
     # ──────────────────────────────────────────────────────────────
-    at_pdl = near_level(price, box["low"]) or price < box["low"]
+    # Price is near PDL = within 1.2% BELOW (not above)
+    at_pdl = (price <= box["low"] * 1.012) and (price >= box["low"] * 0.98)
     rsi_os = rsi < rules["pdbox_long_rsi_threshold"]
+    # Extra safety: MID must be above current price for LONG to make sense
+    long_makes_sense = box["mid"] > price
 
-    if at_pdl and rsi_os:
+    if at_pdl and rsi_os and long_makes_sense:
         log.info(f"LONG setup: price={price:.2f} PDL={box['low']:.2f} RSI={rsi}")
 
         # SL at nearest 4H support below entry - 0.3% buffer
