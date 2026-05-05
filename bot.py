@@ -527,10 +527,24 @@ def check_position(price):
     if not pos:
         return
 
-    hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or \
-             (pos["type"] == "SHORT" and price <= pos["tp"])
-    hit_sl = (pos["type"] == "LONG"  and price <= pos["sl"]) or \
-             (pos["type"] == "SHORT" and price >= pos["sl"])
+    # LONG:  TP is above entry (MID of box), SL is below entry (4H support)
+    # SHORT: TP is below entry (MID of box), SL is above entry (4H resistance)
+    hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or              (pos["type"] == "SHORT" and price <= pos["tp"])
+    hit_sl = (pos["type"] == "LONG"  and price <= pos["sl"]) or              (pos["type"] == "SHORT" and price >= pos["sl"])
+    
+    # Safety check: make sure TP/SL are on the correct side
+    # LONG: tp must be > entry, sl must be < entry
+    # SHORT: tp must be < entry, sl must be > entry
+    if pos["type"] == "LONG":
+        if pos["tp"] <= pos["entry"] or pos["sl"] >= pos["entry"]:
+            log.error(f"LONG position has wrong TP/SL! entry={pos['entry']} tp={pos['tp']} sl={pos['sl']} — closing")
+            state["position"] = None
+            return
+    if pos["type"] == "SHORT":
+        if pos["tp"] >= pos["entry"] or pos["sl"] <= pos["entry"]:
+            log.error(f"SHORT position has wrong TP/SL! entry={pos['entry']} tp={pos['tp']} sl={pos['sl']} — closing")
+            state["position"] = None
+            return
 
     if not hit_tp and not hit_sl:
         return
@@ -600,8 +614,10 @@ def run_strategy():
         check_position(price)
         if state["position"]:
             p = state["position"]
-            state["last_signal"] = f"HOLDING {p['type']} @ {p['entry']:.2f}"
-            return
+            pnl_now = (price - p["entry"]) * p["qty"] if p["type"] == "LONG" else (p["entry"] - price) * p["qty"]
+            state["last_signal"] = f"HOLDING {p['type']} @ {p['entry']:.2f} | PnL: {'+'if pnl_now>=0 else ''}{pnl_now:.2f}"
+            log.info(state["last_signal"])
+            return  # NEVER open new trade while position is open
 
     # ── Build box ──────────────────────────────────────────────────
     box = build_daily_box(candles_4h)
@@ -644,9 +660,19 @@ def run_strategy():
         sl = round(resistance * 1.003, 2)
         tp = box["mid"]
 
-        # If SL is too tight (< 0.1% away), use PDH + 0.5% instead
-        if abs(sl - price) / price < 0.001:
-            sl = round(box["high"] * 1.005, 2)
+        # Ensure TP is BELOW entry for SHORT
+        if tp >= price:
+            tp = round(price * 0.99, 2)  # fallback: 1% below entry
+            log.warning(f"SHORT TP was above entry, adjusted to {tp}")
+
+        # Ensure SL is ABOVE entry for SHORT
+        if sl <= price:
+            sl = round(price * 1.005, 2)  # fallback: 0.5% above entry
+            log.warning(f"SHORT SL was below entry, adjusted to {sl}")
+
+        # If SL is too tight (< 0.3% away), widen it
+        if abs(sl - price) / price < 0.003:
+            sl = round(price * 1.005, 2)
 
         # Position size — double if bearish divergence
         risk_pct = RISK_PER_TRADE * 2 if bear_div else RISK_PER_TRADE
@@ -685,9 +711,19 @@ def run_strategy():
         sl = round(support * 0.997, 2)
         tp = box["mid"]
 
-        # If SL is too tight, use PDL - 0.5% instead
-        if abs(sl - price) / price < 0.001:
-            sl = round(box["low"] * 0.995, 2)
+        # Ensure TP is ABOVE entry for LONG
+        if tp <= price:
+            tp = round(price * 1.01, 2)  # fallback: 1% above entry
+            log.warning(f"LONG TP was below entry, adjusted to {tp}")
+
+        # Ensure SL is BELOW entry for LONG
+        if sl >= price:
+            sl = round(price * 0.995, 2)  # fallback: 0.5% below entry
+            log.warning(f"LONG SL was above entry, adjusted to {sl}")
+
+        # If SL is too tight (< 0.3% away), widen it
+        if abs(price - sl) / price < 0.003:
+            sl = round(price * 0.995, 2)
 
         # Position size — double if bullish divergence
         risk_pct = RISK_PER_TRADE * 2 if bull_div else RISK_PER_TRADE
