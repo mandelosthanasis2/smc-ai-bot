@@ -281,7 +281,7 @@ DASHBOARD = """
         <div class="pulse"></div>
         <span>LIVE</span>
         <div class="divider"></div>
-        <span>{{ last_cycle }}</span>
+        <span class="cycle-time">{{ last_cycle }}</span>
       </div>
     </div>
 
@@ -318,16 +318,12 @@ DASHBOARD = """
     <!-- PRICE -->
     <div class="price-display">
       <div class="price-symbol">BTCUSDT · Perpetual</div>
-      <div class="price-main {{ 'text-green' if current_price > 0 else 'text-gray' }}">
+      <div class="price-main text-green price-main">
         ${{ "{:,.2f}".format(current_price) }}
       </div>
       <div class="price-change">
-        <span class="badge {{ 'badge-green' if rsi < 30 else 'badge-red' if rsi > 70 else 'badge-gray' }}">
-          RSI {{ rsi }}
-        </span>
-        {% if divergence %}
-        <span class="badge badge-paper" style="margin-left:4px;">📊 Divergence!</span>
-        {% endif %}
+        <span class="badge badge-gray" id="rsi-badge">RSI <span class="rsi-val">{{ rsi }}</span></span>
+        <span class="badge badge-paper" id="div-badge" style="margin-left:4px;display:{{ 'inline-block' if divergence else 'none' }};">📊 Divergence!</span>
       </div>
     </div>
 
@@ -337,21 +333,19 @@ DASHBOARD = """
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-label">Balance</div>
-          <div class="stat-value text-green">${{ "{:,.0f}".format(balance) }}</div>
+          <div class="stat-value text-green balance-val">${{ "{:,.0f}".format(balance) }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Total P&L</div>
-          <div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}">
-            {{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}
-          </div>
+          <div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }} pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Win Rate</div>
-          <div class="stat-value text-yellow">{{ win_rate }}%</div>
+          <div class="stat-value text-yellow wr-val">{{ win_rate }}%</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">W / L</div>
-          <div class="stat-value text-gray">{{ wins }}W · {{ losses }}L</div>
+          <div class="stat-value text-gray wl-val">{{ wins }}W · {{ losses }}L</div>
         </div>
       </div>
 
@@ -591,8 +585,184 @@ function loadChart(interval) {
 // Load chart on page ready
 loadChart('60');
 
-// Auto-refresh every 20 seconds
-setTimeout(() => location.reload(), 20000);
+// ── LIVE DATA UPDATE via fetch (no page reload) ─────────────────
+function fmt(n, dec=2) {
+  return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:dec, maximumFractionDigits:dec});
+}
+
+function renderPanel(s) {
+  const wins  = s.wins   || 0;
+  const losses= s.losses || 0;
+  const total = wins + losses;
+  const wr    = total > 0 ? Math.round(wins/total*100) : 0;
+  const rsi   = s.current_rsi || 50;
+  const price = s.current_price || 0;
+  const box   = s.box;
+  const pos   = s.position;
+
+  // ── Price ──
+  document.getElementById('price-val').textContent  = fmt(price);
+  document.getElementById('cycle-val').textContent  = s.last_cycle || '';
+
+  // ── RSI badge ──
+  const rsiBadge = document.getElementById('rsi-badge');
+  rsiBadge.textContent = 'RSI ' + rsi;
+  rsiBadge.className   = 'badge ' + (rsi > 70 ? 'badge-red' : rsi < 30 ? 'badge-green' : 'badge-gray');
+
+  // ── RSI bar ──
+  const bar = document.getElementById('rsi-bar');
+  bar.style.width      = rsi + '%';
+  bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
+  document.getElementById('rsi-num').textContent = rsi;
+
+  // ── Divergence ──
+  const divBadge = document.getElementById('div-badge');
+  divBadge.style.display = s.last_divergence ? 'inline-block' : 'none';
+
+  // ── Stats ──
+  document.getElementById('bal-val').textContent  = fmt(s.balance, 0);
+  const pnlEl = document.getElementById('pnl-val');
+  pnlEl.textContent  = (s.pnl_total >= 0 ? '+' : '') + fmt(s.pnl_total);
+  pnlEl.className    = 'stat-value pnl-val ' + (s.pnl_total >= 0 ? 'text-green' : 'text-red');
+  document.getElementById('wr-val').textContent   = wr + '%';
+  document.getElementById('wl-val').textContent   = wins + 'W · ' + losses + 'L';
+
+  // ── Signal ──
+  const sigType = document.getElementById('sig-type');
+  const sigText = document.getElementById('sig-text');
+  const sigTime = document.getElementById('sig-time');
+  sigText.textContent = s.last_signal || '';
+  sigTime.textContent = s.last_signal_time || '';
+  const sig = s.last_signal || '';
+  if (sig.includes('LONG') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
+    sigType.textContent  = '▲ LONG';
+    sigType.className    = 'signal-type signal-long';
+  } else if (sig.includes('SHORT') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
+    sigType.textContent  = '▼ SHORT';
+    sigType.className    = 'signal-type signal-short';
+  } else if (sig.includes('HOLDING')) {
+    sigType.textContent  = '◆ ' + (pos ? pos.type : 'HOLDING');
+    sigType.className    = 'signal-type signal-wait';
+  } else {
+    sigType.textContent  = '◌ WAIT';
+    sigType.className    = 'signal-type signal-wait';
+  }
+
+  // ── Box ──
+  const boxSec = document.getElementById('box-section');
+  if (box) {
+    boxSec.style.display = 'block';
+    document.getElementById('box-date').textContent = box.date || '';
+    document.getElementById('box-high').textContent = fmt(box.high);
+    document.getElementById('box-mid').textContent  = fmt(box.mid);
+    document.getElementById('box-low').textContent  = fmt(box.low);
+    document.getElementById('box-size').textContent = fmt(box.size, 0);
+  } else {
+    boxSec.style.display = 'none';
+  }
+
+  // ── Open Position ──
+  const posSec = document.getElementById('pos-section');
+  if (pos) {
+    posSec.style.display = 'block';
+    document.getElementById('pos-type').textContent  = pos.type;
+    document.getElementById('pos-type').className    = 'pill ' + (pos.type==='LONG' ? 'pill-long' : 'pill-short');
+    document.getElementById('pos-entry').textContent = fmt(pos.entry);
+    document.getElementById('pos-tp').textContent    = fmt(pos.tp);
+    document.getElementById('pos-sl').textContent    = fmt(pos.sl);
+    document.getElementById('pos-qty').textContent   = pos.qty;
+    document.getElementById('pos-div').innerHTML     = pos.has_divergence
+      ? '<span class="pill pill-div">🔥 DOUBLE</span>' : 'Normal';
+    document.getElementById('pos-score').textContent = pos.news_score || 0;
+    document.getElementById('pos-score').className   =
+      pos.news_score > 0 ? 'text-green' : pos.news_score < 0 ? 'text-red' : 'text-gray';
+    document.getElementById('pos-time').textContent  = pos.time || '';
+    document.getElementById('pos-news').textContent  = pos.news_summary
+      ? '📰 ' + pos.news_summary.substring(0,100) : '';
+    // Live unrealised PnL
+    const unreal = pos.type === 'LONG'
+      ? (price - pos.entry) * pos.qty
+      : (pos.entry - price) * pos.qty;
+    const unrealEl = document.getElementById('pos-unreal');
+    unrealEl.textContent = (unreal >= 0 ? '+' : '') + fmt(unreal);
+    unrealEl.className   = 'stat-value ' + (unreal >= 0 ? 'text-green' : 'text-red');
+  } else {
+    posSec.style.display = 'none';
+  }
+
+  // ── News ──
+  document.getElementById('news-score').textContent  = 'Score: ' + (s.last_news_score || 0);
+  document.getElementById('news-score').className    =
+    'news-score-badge ' + (s.last_news_score > 0 ? 'badge-green' : s.last_news_score < 0 ? 'badge-red' : 'badge-gray');
+  document.getElementById('news-summary').textContent = s.last_news_summary || '';
+  const hlDiv = document.getElementById('news-headlines');
+  if (s.last_news_headlines) {
+    hlDiv.innerHTML = s.last_news_headlines.slice(0,6).map(h =>
+      '<div class="news-hl">• ' + h + '</div>'
+    ).join('');
+  }
+
+  // ── Trade History ──
+  const tradeSec = document.getElementById('trade-section');
+  const tradeBody = document.getElementById('trade-body');
+  if (s.trades && s.trades.length > 0) {
+    tradeSec.style.display = 'block';
+    const rows = [...s.trades].reverse().slice(0,15).map(t =>
+      '<tr>' +
+      '<td class="text-dim">' + (t.time||'').substring(5,16) + '</td>' +
+      '<td><span class="pill ' + (t.type==='LONG'?'pill-long':'pill-short') + '">' + t.type + '</span></td>' +
+      '<td class="' + (t.pnl>=0?'text-green':'text-red') + '">' + (t.pnl>=0?'+':'') + fmt(t.pnl,1) + '</td>' +
+      '<td><span class="pill ' + (t.result==='WIN'?'pill-win':'pill-loss') + '">' + t.result + '</span></td>' +
+      '<td>' + (t.divergence ? '<span class="text-yellow">🔥</span>' : '<span class="text-dim">—</span>') + '</td>' +
+      '</tr>'
+    ).join('');
+    tradeBody.innerHTML = rows;
+  } else {
+    tradeSec.style.display = 'none';
+  }
+
+  // ── Errors ──
+  const errSec  = document.getElementById('err-section');
+  const errDiv  = document.getElementById('err-body');
+  if (s.errors && s.errors.length > 0) {
+    errSec.style.display = 'block';
+    errDiv.innerHTML = s.errors.slice(-3).map(e => '<div class="error-item">' + e + '</div>').join('');
+  } else {
+    errSec.style.display = 'none';
+  }
+
+  // ── Pulse flash ──
+  const dot = document.querySelector('.pulse');
+  if (dot) {
+    dot.style.background = '#f59e0b';
+    setTimeout(() => { dot.style.background = '#10b981'; }, 400);
+  }
+}
+
+function updateData() {
+  fetch('/api')
+    .then(r => r.json())
+    .then(renderPanel)
+    .catch(err => console.log('Update error:', err));
+}
+
+setInterval(updateData, 10000);
+updateData();
+
+// Smart reload: only reload full page when tab is hidden (user not watching)
+// This refreshes trade history, news etc. without interrupting the user
+let reloadTimer = null;
+
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    // Tab hidden: schedule full reload after 60s
+    reloadTimer = setTimeout(() => location.reload(), 60000);
+  } else {
+    // Tab visible again: cancel reload, just fetch fresh data
+    if (reloadTimer) clearTimeout(reloadTimer);
+    updateData();
+  }
+});
 </script>
 </body>
 </html>
