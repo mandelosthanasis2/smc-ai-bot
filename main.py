@@ -51,9 +51,9 @@ DASHBOARD = """
   }
 
   /* ── LAYOUT ── */
-  .app { display: grid; grid-template-columns: 1fr 340px; grid-template-rows: auto 1fr; min-height: 100vh; }
-  .main-col { grid-column: 1; display: flex; flex-direction: column; }
-  .side-col  { grid-column: 2; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+  .app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; height: 100vh; overflow: hidden; }
+  .main-col { grid-column: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .side-col  { grid-column: 2; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
 
   /* ── TOP BAR ── */
   .topbar {
@@ -82,14 +82,28 @@ DASHBOARD = """
   .chart-wrap {
     flex: 1;
     background: var(--bg);
-    min-height: 460px;
+    height: calc(100vh - 100px);
+    min-height: 400px;
     position: relative;
+    overflow: hidden;
+  }
+  .chart-wrap > div,
+  .chart-wrap .tradingview-widget-container,
+  .chart-wrap .tradingview-widget-container__widget {
+    height: 100% !important;
+    width: 100% !important;
+  }
+  .chart-wrap iframe {
+    height: 100% !important;
+    width: 100% !important;
+    border: none !important;
   }
   .chart-toolbar {
     display: flex; align-items: center; gap: 6px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
   .tf-btn {
     font-size: 11px; font-weight: 500; padding: 4px 10px;
@@ -101,7 +115,7 @@ DASHBOARD = """
     background: var(--blue); color: white; border-color: var(--blue);
   }
   .chart-label { font-size: 11px; color: var(--text3); margin-left: auto; }
-  #tv-chart { width: 100%; height: 420px; }
+  #tv-chart { width: 100%; height: 100%; }
 
   /* ── SIDE PANEL ── */
   .side-section { padding: 16px; border-bottom: 1px solid var(--border); }
@@ -206,10 +220,32 @@ DASHBOARD = """
   }
 
   /* ── MOBILE ── */
-  @media (max-width: 768px) {
-    .app { grid-template-columns: 1fr; }
-    .side-col { border-left: none; border-top: 1px solid var(--border); }
-    #tv-chart { height: 280px; }
+  @media (max-width: 900px) {
+    .app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto;
+    }
+    .main-col { grid-column: 1; grid-row: 1; }
+    .side-col {
+      grid-column: 1; grid-row: 2;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      max-height: none;
+    }
+    .chart-wrap {
+      height: 55vw;
+      min-height: 280px;
+      max-height: 420px;
+    }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+    .logo { font-size: 14px; }
+    .price-main { font-size: 22px; }
+  }
+  @media (max-width: 480px) {
+    .chart-wrap { height: 60vw; min-height: 240px; }
+    .tf-btn { padding: 3px 7px; font-size: 10px; }
+    .side-section { padding: 12px; }
   }
 
   .divider { width: 1px; height: 16px; background: var(--border); }
@@ -262,7 +298,10 @@ DASHBOARD = """
 
     <!-- TRADINGVIEW CHART -->
     <div class="chart-wrap">
-      <div id="tv-chart"></div>
+      <div class="tradingview-widget-container" id="tv-chart" style="height:100%;width:100%;">
+        <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%;"></div>
+        <div class="tradingview-widget-copyright" style="display:none;"></div>
+      </div>
     </div>
 
     <!-- BOTTOM BAR -->
@@ -510,7 +549,17 @@ function loadChart(interval) {
   const container = document.getElementById('tv-chart');
   container.innerHTML = '';
 
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tradingview-widget-container';
+  wrapper.style.cssText = 'height:100%;width:100%;';
+
+  const widget = document.createElement('div');
+  widget.className = 'tradingview-widget-container__widget';
+  widget.style.cssText = 'height:100%;width:100%;';
+  wrapper.appendChild(widget);
+
   const script = document.createElement('script');
+  script.type = 'text/javascript';
   script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
   script.async = true;
   script.innerHTML = JSON.stringify({
@@ -522,23 +571,21 @@ function loadChart(interval) {
     "style": "1",
     "locale": "en",
     "backgroundColor": "#0a0e1a",
-    "gridColor": "rgba(30,45,69,0.5)",
+    "gridColor": "rgba(30,45,69,0.3)",
     "hide_top_toolbar": false,
     "hide_legend": false,
+    "hide_side_toolbar": false,
+    "allow_symbol_change": false,
     "save_image": false,
+    "withdateranges": true,
     "studies": [
       "RSI@tv-basicstudies",
       "VWAP@tv-basicstudies"
     ],
     "support_host": "https://www.tradingview.com"
   });
-
-  const widget = document.createElement('div');
-  widget.className = 'tradingview-widget-container__widget';
-  widget.style.height = '100%';
-  widget.style.width = '100%';
-  container.appendChild(widget);
-  container.appendChild(script);
+  wrapper.appendChild(script);
+  container.appendChild(wrapper);
 }
 
 // Load chart on page ready
