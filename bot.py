@@ -594,6 +594,36 @@ def check_position(price):
     if not pos:
         return
 
+    # FORCE_CLOSE: close position at current price immediately
+    if os.environ.get("FORCE_CLOSE", "").lower() == "true":
+        pnl = ((price - pos["entry"]) if pos["type"] == "LONG"
+               else (pos["entry"] - price)) * pos["qty"]
+        pnl = round(pnl, 2)
+        state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
+        state["balance"]   = round(state["balance"]   + pnl, 2)
+        if pnl >= 0: state["wins"]   += 1
+        else:        state["losses"] += 1
+        state["trades"].append({
+            "type":       pos["type"],
+            "entry":      pos["entry"],
+            "close":      price,
+            "pnl":        pnl,
+            "result":     "WIN" if pnl >= 0 else "LOSS",
+            "time":       datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "news_score": pos.get("news_score", 0),
+            "divergence": pos.get("has_divergence", False),
+        })
+        send_telegram(
+            f"🔵 <b>FORCE CLOSED</b> {pos['type']}\n"
+            f"Price: ${price:,.2f}\n"
+            f"PnL: {'+'if pnl>=0 else ''}${pnl:.2f}\n"
+            f"Balance: ${state['balance']:,.2f}"
+        )
+        log.info(f"FORCE CLOSE: {pos['type']} pnl={pnl:+.2f}")
+        state["position"] = None
+        save_state()
+        return
+
     # LONG:  TP is above entry (MID of box), SL is below entry (4H support)
     # SHORT: TP is below entry (MID of box), SL is above entry (4H resistance)
     hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or              (pos["type"] == "SHORT" and price <= pos["tp"])
