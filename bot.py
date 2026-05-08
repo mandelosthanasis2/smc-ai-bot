@@ -1,6 +1,6 @@
-“””
-bot.py — SMC AI Trading Bot v2
-════════════════════════════════════════════════════════════════
+# “””
+bot.py - SMC AI Trading Bot v2
+
 Strategy:
 
 1. Previous Day Box (PDH/PDL/MID) built from 4H candles
@@ -12,8 +12,8 @@ Strategy:
 1. RSI Divergence (20 candle lookback) → double size (4%)
 1. AI news (Claude) → info only, doesn’t block trades
 1. Telegram notifications
-1. Persistent state — survives deploys
-   ════════════════════════════════════════════════════════════════
+1. Persistent state - survives deploys
+   ================================================================
    “””
 
 import os
@@ -113,7 +113,7 @@ merged[“mode”]    = TRADING_MODE
 log.info(f”State loaded: balance=${merged[‘balance’]:.2f} wins={merged[‘wins’]} losses={merged[‘losses’]}”)
 return merged
 except Exception as e:
-log.warning(f”Could not load state ({e}) — using SAVED_STATE”)
+log.warning(f”Could not load state ({e}) - using SAVED_STATE”)
 merged = {**DEFAULT_STATE, **SAVED_STATE}
 merged[“running”] = True
 merged[“mode”]    = TRADING_MODE
@@ -456,13 +456,13 @@ if os.environ.get("FORCE_CLOSE", "").lower() == "true":
 # Safety check: TP/SL on correct side
 if pos["type"] == "LONG":
     if pos["tp"] <= pos["entry"] or pos["sl"] >= pos["entry"]:
-        log.error(f"LONG wrong TP/SL — closing. entry={pos['entry']} tp={pos['tp']} sl={pos['sl']}")
+        log.error(f"LONG wrong TP/SL - closing. entry={pos['entry']} tp={pos['tp']} sl={pos['sl']}")
         state["position"] = None
         save_state()
         return
 if pos["type"] == "SHORT":
     if pos["tp"] >= pos["entry"] or pos["sl"] <= pos["entry"]:
-        log.error(f"SHORT wrong TP/SL — closing. entry={pos['entry']} tp={pos['tp']} sl={pos['sl']}")
+        log.error(f"SHORT wrong TP/SL - closing. entry={pos['entry']} tp={pos['tp']} sl={pos['sl']}")
         state["position"] = None
         save_state()
         return
@@ -586,7 +586,7 @@ if at_pdh and rsi_ob and short_makes_sense:
 
     ok = execute_trade("SHORT", price, sl, tp, qty, score, summary, bear_div)
     if not ok:
-        state["last_signal"] = "SHORT — order failed"
+        state["last_signal"] = "SHORT - order failed"
     return
 
 # ── LONG: price within 0.5% of PDL + RSI < 30 ────────────────
@@ -617,7 +617,7 @@ if at_pdl and rsi_os and long_makes_sense:
 
     ok = execute_trade("LONG", price, sl, tp, qty, score, summary, bull_div)
     if not ok:
-        state["last_signal"] = "LONG — order failed"
+        state["last_signal"] = "LONG - order failed"
     return
 
 # ── WAIT ──────────────────────────────────────────────────────
@@ -629,11 +629,11 @@ log.info(state["last_signal"])
 # ── BOT LOOP ─────────────────────────────────────────────────────
 
 def bot_loop():
-log.info(“═══════════════════════════════════════”)
-log.info(”  SMC AI BOT v2 — Bitget | Railway”)
+log.info(”=======================================”)
+log.info(”  SMC AI BOT v2 - Bitget | Railway”)
 log.info(f”  Mode: {TRADING_MODE} | Leverage: {LEVERAGE}x”)
 log.info(f”  Balance: ${state[‘balance’]:.2f} | Wins: {state[‘wins’]} Losses: {state[‘losses’]}”)
-log.info(“═══════════════════════════════════════”)
+log.info(”=======================================”)
 
 ```
 send_telegram(
