@@ -48,8 +48,9 @@ def send_telegram(msg):
         log.warning(f"Telegram error: {e}")
 
 # ── STATE ────────────────────────────────────────────────────────
-state = {
-    "running":             True,
+STATE_FILE = "/app/bot_state.json"
+
+DEFAULT_STATE = {
     "mode":                TRADING_MODE,
     "leverage":            LEVERAGE,
     "position":            None,
@@ -70,6 +71,71 @@ state = {
     "errors":              [],
     "last_divergence":     False,
 }
+
+# ── SAVED STATE (από το τελευταίο deploy) ────────────────────────
+SAVED_STATE = {
+    "balance":   10151.56,
+    "pnl_total": 151.56,
+    "wins":      1,
+    "losses":    0,
+    "trades": [
+        {
+            "close":      79452.85,
+            "divergence": False,
+            "entry":      80865.3,
+            "news_score": 0,
+            "pnl":        151.56,
+            "result":     "WIN",
+            "time":       "2026-05-08 02:18",
+            "type":       "SHORT"
+        }
+    ],
+    "position": {
+        "entry":         80215.4,
+        "has_divergence": False,
+        "news_score":    0,
+        "news_summary":  "",
+        "order_id":      "PAPER_1778238291",
+        "qty":           0.0255,
+        "sl":            72260.27,
+        "time":          "2026-05-08 11:04 UTC",
+        "tp":            80562.45,
+        "type":          "LONG"
+    },
+}
+
+def load_state():
+    """Load state from file — survives deploys."""
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE) as f:
+                saved = json.load(f)
+            merged = {**DEFAULT_STATE, **saved}
+            merged["running"] = True
+            merged["mode"]    = TRADING_MODE
+            log.info(f"State loaded: balance=${merged['balance']:.2f} | "
+                     f"trades={len(merged['trades'])} | wins={merged['wins']} losses={merged['losses']}")
+            return merged
+    except Exception as e:
+        log.warning(f"Could not load state ({e}) — loading from SAVED_STATE")
+    # Fallback: use hardcoded saved state
+    merged = {**DEFAULT_STATE, **SAVED_STATE}
+    merged["running"] = True
+    merged["mode"]    = TRADING_MODE
+    log.info(f"SAVED_STATE loaded: balance=${merged['balance']:.2f} wins={merged['wins']}")
+    return merged
+
+def save_state():
+    """Save state to file so it survives deploys."""
+    try:
+        to_save = {k: v for k, v in state.items() if k != "running"}
+        with open(STATE_FILE, "w") as f:
+            json.dump(to_save, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Could not save state: {e}")
+
+state = load_state()
+state["running"] = True
 
 # ── BITGET API ────────────────────────────────────────────────────
 BITGET_BASE      = "https://api.bitget.com"
@@ -501,6 +567,7 @@ def execute_trade(signal, entry, sl, tp, qty, news_score, news_summary, has_dive
         }
         state["last_signal"]      = signal
         state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        save_state()
 
         risk_pct = RISK_PER_TRADE * 2 if has_divergence else RISK_PER_TRADE
         div_txt  = "🔥 DOUBLE SIZE (divergence)" if has_divergence else "Normal size"
@@ -587,6 +654,7 @@ def check_position(price):
         close_position_live(pos["type"])
 
     state["position"] = None
+    save_state()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -650,11 +718,13 @@ def run_strategy():
     # TP: MID of box (MUST be below entry for SHORT)
     # Size: x2 if bearish divergence
     # ──────────────────────────────────────────────────────────────
-    # Price is near PDH = within 1.2% ABOVE (not below)
-    at_pdh = (price >= box["high"] * 0.988) and (price <= box["high"] * 1.02)
+    # Price is near PDH = within 0.5% only (tight zone)
+    # Must be very close to PDH — not in the middle of the box!
+    at_pdh = (price >= box["high"] * 0.995) and (price <= box["high"] * 1.015)
     rsi_ob = rsi > rules["pdbox_short_rsi_threshold"]
-    # Extra safety: MID must be below current price for SHORT to make sense
     short_makes_sense = box["mid"] < price
+    log.info(f"SHORT check: price={price:.2f} PDH={box['high']:.2f} "
+             f"at_pdh={at_pdh} rsi={rsi} rsi_ok={rsi_ob}")
 
     if at_pdh and rsi_ob and short_makes_sense:
         log.info(f"SHORT setup: price={price:.2f} PDH={box['high']:.2f} RSI={rsi}")
@@ -704,11 +774,13 @@ def run_strategy():
     # TP: MID of box (MUST be above entry for LONG)
     # Size: x2 if bullish divergence
     # ──────────────────────────────────────────────────────────────
-    # Price is near PDL = within 1.2% BELOW (not above)
-    at_pdl = (price <= box["low"] * 1.012) and (price >= box["low"] * 0.98)
+    # Price is near PDL = within 0.5% only (tight zone)
+    # Must be very close to PDL — not in the middle of the box!
+    at_pdl = (price <= box["low"] * 1.005) and (price >= box["low"] * 0.985)
     rsi_os = rsi < rules["pdbox_long_rsi_threshold"]
-    # Extra safety: MID must be above current price for LONG to make sense
     long_makes_sense = box["mid"] > price
+    log.info(f"LONG check: price={price:.2f} PDL={box['low']:.2f} "
+             f"at_pdl={at_pdl} rsi={rsi} rsi_ok={rsi_os}")
 
     if at_pdl and rsi_os and long_makes_sense:
         log.info(f"LONG setup: price={price:.2f} PDL={box['low']:.2f} RSI={rsi}")
@@ -796,6 +868,7 @@ def bot_loop():
             state["errors"] = state["errors"][-10:]
 
         cycle = int(os.environ.get("CYCLE_SECONDS", "60"))
+        save_state()  # persist state every cycle
         log.info(f"Next cycle in {cycle}s")
         time.sleep(cycle)
 
