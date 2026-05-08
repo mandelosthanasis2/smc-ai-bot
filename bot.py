@@ -90,18 +90,7 @@ SAVED_STATE = {
             "type":       "SHORT"
         }
     ],
-    "position": {
-        "entry":         80215.4,
-        "has_divergence": False,
-        "news_score":    0,
-        "news_summary":  "",
-        "order_id":      "PAPER_1778238291",
-        "qty":           0.0255,
-        "sl":            72260.27,
-        "time":          "2026-05-08 11:04 UTC",
-        "tp":            80562.45,
-        "type":          "LONG"
-    },
+    "position": None,  # no open position
 }
 
 def load_state():
