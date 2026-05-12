@@ -174,7 +174,7 @@ def get_balance():
         return state["balance"]
 
 def get_candles(granularity, limit=200):
-    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H"}
+    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H", "15m": "15min"}
     gran     = gran_map.get(granularity, "1H")
     r        = bitget_get("/api/v2/mix/market/candles", {
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
@@ -604,6 +604,250 @@ def run_strategy():
     log.info(state["last_signal"])
 
 # ── BOT LOOP ─────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# STRATEGY B — 15m entry | 1H box | R/R 2:1
+# ═══════════════════════════════════════════════════════════════
+
+state_b = {
+    "position":          None,
+    "last_signal":       "Starting...",
+    "last_signal_time":  "",
+    "trades":            [],
+    "balance":           10000.0,
+    "pnl_total":         0.0,
+    "wins":              0,
+    "losses":            0,
+    "box":               None,
+    "current_rsi":       50.0,
+    "last_cycle":        "",
+    "last_divergence":   False,
+    "errors":            [],
+}
+
+STATE_FILE_B = "/app/bot_state_b.json"
+
+def load_state_b():
+    try:
+        if os.path.exists(STATE_FILE_B):
+            with open(STATE_FILE_B) as f:
+                saved = json.load(f)
+            log.info(f"State B loaded: balance=${saved.get('balance',10000):.2f} wins={saved.get('wins',0)}")
+            return {**state_b, **saved}
+    except Exception as e:
+        log.warning(f"Could not load state B: {e}")
+    return dict(state_b)
+
+def save_state_b():
+    try:
+        with open(STATE_FILE_B, "w") as f:
+            json.dump(state_b, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Could not save state B: {e}")
+
+# Load state B
+state_b.update(load_state_b())
+
+
+def build_1h_box(candles_1h):
+    """
+    Build box from previous completed 1H candle.
+    High/Low of the last closed 1H candle.
+    """
+    if len(candles_1h) < 2:
+        return None
+    # Last completed candle (not current)
+    prev = candles_1h[-2]
+    box = {
+        "high": prev["high"],
+        "low":  prev["low"],
+        "mid":  round((prev["high"] + prev["low"]) / 2, 2),
+        "size": round(prev["high"] - prev["low"], 2),
+        "time": datetime.fromtimestamp(prev["time"]/1000, tz=timezone.utc).strftime("%H:%M UTC"),
+    }
+    state_b["box"] = box
+    log.info(f"1H Box: H={box['high']:.2f} L={box['low']:.2f} MID={box['mid']:.2f} Size={box['size']:.2f}")
+    return box
+
+
+def check_position_b(price):
+    """Check Strategy B position."""
+    pos = state_b["position"]
+    if not pos:
+        return
+
+    # FORCE CLOSE
+    if os.environ.get("FORCE_CLOSE_B", "").lower() == "true":
+        pnl = ((price - pos["entry"]) if pos["type"] == "LONG"
+               else (pos["entry"] - price)) * pos["qty"]
+        pnl = round(pnl, 2)
+        state_b["pnl_total"] = round(state_b["pnl_total"] + pnl, 2)
+        state_b["balance"]   = round(state_b["balance"]   + pnl, 2)
+        if pnl >= 0: state_b["wins"]   += 1
+        else:        state_b["losses"] += 1
+        state_b["trades"].append({
+            "type": pos["type"], "entry": pos["entry"], "close": price,
+            "pnl": pnl, "result": "WIN" if pnl >= 0 else "LOSS",
+            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "divergence": pos.get("has_divergence", False),
+        })
+        send_telegram("🔵 <b>[B] FORCE CLOSED</b> " + pos["type"] + "\nPnL: " + ("+" if pnl>=0 else "-") + "$" + str(abs(pnl)))
+        state_b["position"] = None
+        save_state_b()
+        return
+
+    hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or              (pos["type"] == "SHORT" and price <= pos["tp"])
+    hit_sl = (pos["type"] == "LONG"  and price <= pos["sl"]) or              (pos["type"] == "SHORT" and price >= pos["sl"])
+
+    if not hit_tp and not hit_sl:
+        return
+
+    close_price = pos["tp"] if hit_tp else pos["sl"]
+    pnl = ((close_price - pos["entry"]) if pos["type"] == "LONG"
+           else (pos["entry"] - close_price)) * pos["qty"]
+    pnl = round(pnl, 2)
+
+    state_b["pnl_total"] = round(state_b["pnl_total"] + pnl, 2)
+    state_b["balance"]   = round(state_b["balance"]   + pnl, 2)
+    if hit_tp: state_b["wins"]   += 1
+    else:      state_b["losses"] += 1
+
+    state_b["trades"].append({
+        "type": pos["type"], "entry": pos["entry"], "close": close_price,
+        "pnl": pnl, "result": "WIN" if hit_tp else "LOSS",
+        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": pos.get("has_divergence", False),
+    })
+
+    wins = state_b["wins"]; losses = state_b["losses"]
+    send_telegram(
+        f"{'✅' if hit_tp else '❌'} <b>[B] {'TAKE PROFIT' if hit_tp else 'STOP LOSS'}</b>\n"
+        f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
+        f"Balance: ${state_b['balance']:,.2f}\n"
+        f"W/L: {wins}W/{losses}L"
+    )
+    state_b["position"] = None
+    save_state_b()
+
+
+def run_strategy_b():
+    """
+    Strategy B: 15m entry | 1H box | R/R 2:1
+    TP = MID of 1H box
+    SL = Entry - (TP_distance / 2) for LONG
+         Entry + (TP_distance / 2) for SHORT
+    """
+    price       = get_ticker()
+    candles_15m = get_candles("15m", 100)
+    candles_1h  = get_candles("1H",  50)
+
+    if len(candles_15m) < 20 or len(candles_1h) < 3:
+        state_b["last_signal"] = "Not enough data"
+        return
+
+    # Check open position
+    if state_b["position"]:
+        check_position_b(price)
+        if state_b["position"]:
+            pos = state_b["position"]
+            pnl = (price - pos["entry"]) * pos["qty"] if pos["type"] == "LONG"                   else (pos["entry"] - price) * pos["qty"]
+            state_b["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}"
+            return
+
+    # Build 1H box
+    box = build_1h_box(candles_1h)
+    if not box:
+        return
+
+    # RSI on 15m
+    closes_15m = [c["close"] for c in candles_15m]
+    rsi        = calc_rsi(closes_15m)
+    state_b["current_rsi"] = rsi
+
+    # Divergence on 15m
+    bull_div, bear_div = detect_rsi_divergence(candles_15m, lookback=20)
+    state_b["last_divergence"] = bull_div or bear_div
+
+    balance  = state_b["balance"]
+
+    log.info(f"[B] Price={price:.2f} RSI={rsi} 1H Box=[{box['low']:.2f}-{box['high']:.2f}] MID={box['mid']:.2f}")
+
+    # ── SHORT: price near 1H High + RSI > 70 ─────────────────────
+    at_high = (price >= box["high"] * 0.995) and (price <= box["high"] * 1.015)
+    rsi_ob  = rsi > 70
+    short_ok = box["mid"] < price
+
+    if at_high and rsi_ob and short_ok:
+        tp_dist  = price - box["mid"]
+        sl_dist  = tp_dist / 2          # SL = half of TP distance → R/R 2:1
+        tp       = box["mid"]
+        sl       = round(price + sl_dist, 2)
+        risk_pct = RISK_PER_TRADE * 2 if bear_div else RISK_PER_TRADE
+        qty      = calc_qty(balance, risk_pct, price, sl)
+
+        log.info(f"[B] SHORT: entry={price:.2f} tp={tp:.2f} sl={sl:.2f} R/R=2:1 div={bear_div}")
+
+        order_id = place_order_paper("SHORT", qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live("SHORT", qty, sl, tp)
+
+        if order_id:
+            state_b["position"] = {
+                "type": "SHORT", "entry": price, "sl": sl, "tp": tp,
+                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "order_id": order_id, "has_divergence": bear_div,
+            }
+            state_b["last_signal"]      = "SHORT"
+            state_b["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            save_state_b()
+            send_telegram(
+                f"🔴 <b>[B] SHORT OPENED</b>\n"
+                f"Entry: ${price:,.2f}\n"
+                f"TP: ${tp:,.2f} (+${tp_dist:.0f})\n"
+                f"SL: ${sl:,.2f} (-${sl_dist:.0f})\n"
+                f"R/R: 2:1 | {'🔥 DOUBLE' if bear_div else 'Normal'}"
+            )
+        return
+
+    # ── LONG: price near 1H Low + RSI < 30 ───────────────────────
+    at_low  = (price <= box["low"] * 1.005) and (price >= box["low"] * 0.985)
+    rsi_os  = rsi < 30
+    long_ok = box["mid"] > price
+
+    if at_low and rsi_os and long_ok:
+        tp_dist  = box["mid"] - price
+        sl_dist  = tp_dist / 2          # SL = half of TP distance → R/R 2:1
+        tp       = box["mid"]
+        sl       = round(price - sl_dist, 2)
+        risk_pct = RISK_PER_TRADE * 2 if bull_div else RISK_PER_TRADE
+        qty      = calc_qty(balance, risk_pct, price, sl)
+
+        log.info(f"[B] LONG: entry={price:.2f} tp={tp:.2f} sl={sl:.2f} R/R=2:1 div={bull_div}")
+
+        order_id = place_order_paper("LONG", qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live("LONG", qty, sl, tp)
+
+        if order_id:
+            state_b["position"] = {
+                "type": "LONG", "entry": price, "sl": sl, "tp": tp,
+                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "order_id": order_id, "has_divergence": bull_div,
+            }
+            state_b["last_signal"]      = "LONG"
+            state_b["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            save_state_b()
+            send_telegram(
+                f"🟢 <b>[B] LONG OPENED</b>\n"
+                f"Entry: ${price:,.2f}\n"
+                f"TP: ${tp:,.2f} (+${tp_dist:.0f})\n"
+                f"SL: ${sl:,.2f} (-${sl_dist:.0f})\n"
+                f"R/R: 2:1 | {'🔥 DOUBLE' if bull_div else 'Normal'}"
+            )
+        return
+
+    # Wait
+    div_txt = "Div!" if (bull_div or bear_div) else "No div"
+    state_b["last_signal"] = f"WAIT | RSI={rsi} | 1H [{box['low']:.0f}-{box['high']:.0f}] | {div_txt}"
+    log.info(f"[B] {state_b['last_signal']}")
+
+
 def bot_loop():
     log.info("=======================================")
     log.info("  SMC AI BOT v2 - Bitget | Railway")
@@ -622,8 +866,16 @@ def bot_loop():
 
     while state["running"]:
         try:
-            state["last_cycle"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            state["last_cycle"]   = now
+            state_b["last_cycle"] = now
+
+            # Strategy A: Daily box + 1H entry
             run_strategy()
+
+            # Strategy B: 1H box + 15m entry
+            run_strategy_b()
+
         except Exception as e:
             log.error(f"Strategy error: {e}")
             state["errors"].append(f"{datetime.now(timezone.utc).strftime('%H:%M')} {str(e)[:80]}")
@@ -631,6 +883,7 @@ def bot_loop():
 
         cycle = int(os.environ.get("CYCLE_SECONDS", "60"))
         save_state()
+        save_state_b()
         log.info(f"Next cycle in {cycle}s")
         time.sleep(cycle)
 
