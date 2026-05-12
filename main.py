@@ -4,7 +4,7 @@ Beautiful UI with TradingView chart embedded
 """
 
 from flask import Flask, render_template_string, jsonify
-from bot import state, bot_thread
+from bot import state, state_b, bot_thread
 from config import PORT
 
 app = Flask(__name__)
@@ -281,7 +281,7 @@ DASHBOARD = """
         <div class="pulse"></div>
         <span>LIVE</span>
         <div class="divider"></div>
-        <span class="cycle-time">{{ last_cycle }}</span>
+        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
       </div>
     </div>
 
@@ -769,6 +769,297 @@ document.addEventListener('visibilitychange', function() {
 """
 
 
+
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD B — Strategy B (15m entry | 1H box | R/R 2:1)
+# ═══════════════════════════════════════════════════════════════
+DASHBOARD_B = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMC AI Bot — Strategy B</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
+  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
+  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6; --purple: #8b5cf6;
+}
+body { background: var(--bg); color: var(--text); font-family: Inter, monospace; }
+.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
+.main-col { display: flex; flex-direction: column; }
+.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.logo { font-size: 15px; font-weight: 700; }
+.logo span { color: var(--purple); }
+.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
+.badge-b { background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); }
+.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge-gray { background: rgba(71,85,105,0.3); color: var(--text2); border: 1px solid var(--border); }
+.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--purple); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); transition: all 0.15s; }
+.tf-btn.active { background: var(--purple); color: white; border-color: var(--purple); }
+.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
+.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
+.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
+.price-main { font-size: 28px; font-weight: 700; color: var(--green); }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.stat-value { font-size: 16px; font-weight: 600; }
+.signal-card { border-radius: 10px; padding: 14px; border: 1px solid var(--border); background: var(--bg3); }
+.signal-type { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 5px 14px; border-radius: 8px; margin-bottom: 10px; }
+.signal-long  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+.signal-short { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+.signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2);  border: 1px solid var(--border); }
+.box-levels { display: flex; flex-direction: column; gap: 6px; }
+.level-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 8px; }
+.level-pdh { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
+.level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+.level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+.level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; }
+.level-price { font-size: 14px; font-weight: 700; }
+.pos-card { background: var(--bg3); border-radius: 10px; padding: 14px; border: 1px solid rgba(139,92,246,0.3); }
+.pos-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.pos-row:last-child { border-bottom: none; }
+.trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
+.pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 600; }
+.pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
+.pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
+.nav-link { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 11px; background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); text-decoration: none; }
+.nav-link.active-a { background: rgba(59,130,246,0.15); color: var(--blue); border-color: rgba(59,130,246,0.3); }
+.bottombar { padding: 10px 20px; background: var(--bg2); border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 10px; color: var(--text3); }
+.text-green { color: var(--green); } .text-red { color: var(--red); } .text-yellow { color: var(--yellow); } .text-gray { color: var(--text2); } .text-dim { color: var(--text3); } .text-purple { color: var(--purple); }
+.rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.rsi-bar-fill { height: 100%; border-radius: 3px; }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .side-col { border-left: none; border-top: 1px solid var(--border); }
+  .chart-wrap { height: 55vw; min-height: 280px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main-col">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="logo">SMC <span>AI</span> Bot</div>
+        <span class="badge badge-b">STRATEGY B</span>
+        <span class="badge badge-paper">PAPER</span>
+        <span class="badge badge-gray">15m · 1H BOX</span>
+        <span class="badge badge-gray">R/R 2:1</span>
+        {% if position %}<span class="badge" style="background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);">{{ position.type }} OPEN</span>{% endif %}
+      </div>
+      <div class="topbar-right">
+        <a href="/" class="nav-link active-a">Strategy A</a>
+        <a href="/b" class="nav-link">Strategy B</a>
+        <div class="pulse"></div>
+        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
+      </div>
+    </div>
+    <div class="chart-toolbar">
+      <button class="tf-btn" onclick="setTF('1')">1m</button>
+      <button class="tf-btn active" onclick="setTF('15')" id="tf-15">15m</button>
+      <button class="tf-btn" onclick="setTF('60')">1H</button>
+      <button class="tf-btn" onclick="setTF('240')">4H</button>
+      <span style="font-size:11px;color:#475569;margin-left:auto;">powered by TradingView</span>
+    </div>
+    <div class="chart-wrap"><div id="tv-chart"></div></div>
+    <div class="bottombar">
+      <span>⚠ PAPER TRADING · STRATEGY B · 15m ENTRY · 1H BOX · R/R 2:1</span>
+      <span>Auto-refresh 10s</span>
+    </div>
+  </div>
+
+  <div class="side-col">
+    <div class="price-display">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">BTCUSDT · 15m</div>
+      <div class="price-main" id="price-val">${{ "{:,.2f}".format(current_price) }}</div>
+      <div style="margin-top:6px;">
+        <span class="badge {{ 'badge-paper' if rsi < 30 else 'badge-gray' }}" id="rsi-badge" style="{{ 'background:rgba(239,68,68,0.15);color:#ef4444;border-color:#ef4444' if rsi > 70 else '' }}">RSI {{ rsi }}</span>
+        {% if divergence %}<span class="badge badge-b" style="margin-left:4px;" id="div-badge">📊 Div!</span>{% else %}<span id="div-badge" style="display:none;"></span>{% endif %}
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-title">Performance</div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value text-green" id="bal-val">${{ "{:,.0f}".format(balance) }}</div></div>
+        <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}" id="pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div></div>
+        <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value text-yellow" id="wr-val">{{ win_rate }}%</div></div>
+        <div class="stat-card"><div class="stat-label">W / L</div><div class="stat-value text-gray" id="wl-val">{{ wins }}W · {{ losses }}L</div></div>
+      </div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);">
+          <span>RSI 15m</span><span id="rsi-num">{{ rsi }}</span>
+        </div>
+        <div class="rsi-bar-bg">
+          <div class="rsi-bar-fill" id="rsi-bar" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-title">Current Signal</div>
+      <div class="signal-card">
+        <div id="sig-type" class="signal-type signal-wait">◌ WAIT</div>
+        <div id="sig-text" style="font-size:11px;color:var(--text2);">{{ signal }}</div>
+        <div id="sig-time" style="font-size:10px;color:var(--text3);margin-top:4px;">{{ signal_time }}</div>
+      </div>
+    </div>
+
+    {% if box %}
+    <div class="side-section">
+      <div class="side-title">1H Box · {{ box.time }}</div>
+      <div class="box-levels">
+        <div class="level-row level-pdh">
+          <div><div class="level-name text-red">HIGH · Short Zone</div><div style="font-size:9px;opacity:0.6;">RSI > 70 → Sell</div></div>
+          <div class="level-price text-red" id="box-high">${{ "{:,.2f}".format(box.high) }}</div>
+        </div>
+        <div class="level-row level-mid">
+          <div><div class="level-name text-yellow">MID · Take Profit</div><div style="font-size:9px;opacity:0.6;">R/R 2:1</div></div>
+          <div class="level-price text-yellow" id="box-mid">${{ "{:,.2f}".format(box.mid) }}</div>
+        </div>
+        <div class="level-row level-pdl">
+          <div><div class="level-name text-green">LOW · Long Zone</div><div style="font-size:9px;opacity:0.6;">RSI < 30 → Buy</div></div>
+          <div class="level-price text-green" id="box-low">${{ "{:,.2f}".format(box.low) }}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;">Box size: ${{ "{:,.0f}".format(box.size) }} · SL = TP/2 · R/R 2:1</div>
+    </div>
+    {% endif %}
+
+    {% if position %}
+    <div class="side-section">
+      <div class="side-title">Open Position</div>
+      <div class="pos-card">
+        <div class="pos-row"><span style="color:var(--text2);">Type</span><span class="pill {{ 'pill-long' if position.type=='LONG' else 'pill-short' }}" id="pos-type">{{ position.type }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Entry</span><span id="pos-entry">${{ "{:,.2f}".format(position.entry) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Unrealised</span><span id="pos-unreal" class="text-gray">—</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Take Profit</span><span class="text-green" id="pos-tp">${{ "{:,.2f}".format(position.tp) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Stop Loss</span><span class="text-red" id="pos-sl">${{ "{:,.2f}".format(position.sl) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">R/R</span><span class="text-purple">2:1</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Qty</span><span id="pos-qty">{{ position.qty }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Opened</span><span class="text-dim" id="pos-time">{{ position.time }}</span></div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if trades %}
+    <div class="side-section">
+      <div class="side-title">Trade History</div>
+      <table class="trade-table">
+        <thead><tr><th>Time</th><th>Type</th><th>P&L</th><th>Result</th><th>Div</th></tr></thead>
+        <tbody id="trade-body">
+          {% for t in trades[-15:]|reverse %}
+          <tr>
+            <td class="text-dim">{{ t.time[5:16] }}</td>
+            <td><span class="pill {{ 'pill-long' if t.type=='LONG' else 'pill-short' }}">{{ t.type }}</span></td>
+            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">{{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}</td>
+            <td><span class="pill {{ 'pill-win' if t.result=='WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
+            <td>{% if t.get('divergence') %}<span style="color:#f59e0b;">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+let currentTF = '15';
+function setTF(tf) {
+  currentTF = tf;
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadChart(tf);
+}
+function loadChart(interval) {
+  const container = document.getElementById('tv-chart');
+  container.innerHTML = '';
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tradingview-widget-container';
+  wrapper.style.cssText = 'height:100%;width:100%;';
+  const widget = document.createElement('div');
+  widget.className = 'tradingview-widget-container__widget';
+  widget.style.cssText = 'height:100%;width:100%;';
+  wrapper.appendChild(widget);
+  const script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  script.async = true;
+  script.innerHTML = JSON.stringify({
+    "autosize": true, "symbol": "BITGET:BTCUSDT.P",
+    "interval": interval, "timezone": "Etc/UTC",
+    "theme": "dark", "style": "1", "locale": "en",
+    "backgroundColor": "#0a0e1a", "gridColor": "rgba(30,45,69,0.3)",
+    "studies": ["RSI@tv-basicstudies"],
+    "support_host": "https://www.tradingview.com"
+  });
+  wrapper.appendChild(script);
+  container.appendChild(wrapper);
+}
+loadChart('15');
+
+function updateData() {
+  fetch('/api/b')
+    .then(r => r.json())
+    .then(s => {
+      const price = s.current_price || 0;
+      document.getElementById('price-val').textContent = '$' + price.toLocaleString('en-US', {minimumFractionDigits:2});
+      document.getElementById('cycle-time') && (document.querySelector('.cycle-time').textContent = s.last_cycle || '');
+      const rsi = s.current_rsi || 50;
+      document.getElementById('rsi-num').textContent = rsi;
+      const bar = document.getElementById('rsi-bar');
+      bar.style.width = rsi + '%';
+      bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
+      document.getElementById('bal-val').textContent = '$' + (s.balance||0).toLocaleString('en-US',{minimumFractionDigits:0});
+      const pnl = s.pnl_total || 0;
+      const pnlEl = document.getElementById('pnl-val');
+      pnlEl.textContent = (pnl>=0?'+':'') + '$' + Math.abs(pnl).toFixed(2);
+      pnlEl.className = 'stat-value ' + (pnl>=0?'text-green':'text-red');
+      const w = s.wins||0, l = s.losses||0;
+      document.getElementById('wl-val').textContent = w + 'W · ' + l + 'L';
+      document.getElementById('wr-val').textContent = (w+l>0?Math.round(w/(w+l)*100):0) + '%';
+      const sig = s.last_signal || '';
+      const sigType = document.getElementById('sig-type');
+      document.getElementById('sig-text').textContent = sig;
+      if (sig.includes('LONG') && !sig.includes('HOLDING')) { sigType.textContent = '▲ LONG'; sigType.className = 'signal-type signal-long'; }
+      else if (sig.includes('SHORT') && !sig.includes('HOLDING')) { sigType.textContent = '▼ SHORT'; sigType.className = 'signal-type signal-short'; }
+      else { sigType.textContent = '◌ WAIT'; sigType.className = 'signal-type signal-wait'; }
+      if (s.position) {
+        const pos = s.position;
+        const unreal = pos.type === 'LONG' ? (price - pos.entry) * pos.qty : (pos.entry - price) * pos.qty;
+        const unrealEl = document.getElementById('pos-unreal');
+        if (unrealEl) { unrealEl.textContent = (unreal>=0?'+':'') + '$' + unreal.toFixed(2); unrealEl.className = unreal>=0?'text-green':'text-red'; }
+      }
+    }).catch(e => console.log(e));
+}
+setInterval(updateData, 10000);
+updateData();
+
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) updateData();
+});
+</script>
+</body>
+</html>
+"""
+
+
 @app.route("/")
 def index():
     s      = state
@@ -802,6 +1093,35 @@ def index():
 @app.route("/api")
 def api():
     return jsonify(state)
+
+@app.route("/api/b")
+def api_b():
+    return jsonify(state_b)
+
+@app.route("/b")
+def strategy_b():
+    s    = state_b
+    wins = s.get("wins", 0)
+    losses = s.get("losses", 0)
+    total  = wins + losses
+    return render_template_string(
+        DASHBOARD_B,
+        balance       = s.get("balance", 10000),
+        pnl           = s.get("pnl_total", 0),
+        wins          = wins,
+        losses        = losses,
+        win_rate      = round(wins/total*100) if total > 0 else 0,
+        rsi           = s.get("current_rsi", 50),
+        divergence    = s.get("last_divergence", False),
+        signal        = s.get("last_signal", "Starting..."),
+        signal_time   = s.get("last_signal_time", ""),
+        last_cycle    = s.get("last_cycle", ""),
+        position      = s.get("position"),
+        box           = s.get("box"),
+        current_price = state.get("current_price", 0),
+        trades        = s.get("trades", []),
+        errors        = s.get("errors", []),
+    )
 
 
 if __name__ == "__main__":
