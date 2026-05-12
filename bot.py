@@ -174,7 +174,7 @@ def get_balance():
         return state["balance"]
 
 def get_candles(granularity, limit=200):
-    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H", "15m": "15min"}
+    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H", "15m": "15m"}
     gran     = gran_map.get(granularity, "1H")
     r        = bitget_get("/api/v2/mix/market/candles", {
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
