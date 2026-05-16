@@ -237,15 +237,34 @@ def close_position_live(side):
 
 # ── INDICATORS ───────────────────────────────────────────────────
 def calc_rsi(closes, period=14):
-    if len(closes) < period + 2:
+    """
+    Correct Wilder RSI — matches TradingView exactly.
+    Uses all available closes for proper smoothing.
+    """
+    if len(closes) < period + 1:
         return 50.0
-    ag = al = 0.0
+
+    # Calculate initial average gain/loss from first `period` changes
+    gains  = []
+    losses = []
     for i in range(1, period + 1):
-        d = closes[-i] - closes[-i-1]
-        if d > 0: ag += d
-        else:     al -= d
-    ag /= period; al /= period
-    return round(100 - 100 / (1 + ag / al), 2) if al > 0 else 100.0
+        d = closes[i] - closes[i - 1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+
+    avg_gain = sum(gains)  / period
+    avg_loss = sum(losses) / period
+
+    # Wilder smoothing for remaining candles
+    for i in range(period + 1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + max(d, 0))  / period
+        avg_loss = (avg_loss * (period - 1) + max(-d, 0)) / period
+
+    if avg_loss == 0:
+        return 100.0
+    rs  = avg_gain / avg_loss
+    return round(100 - 100 / (1 + rs), 2)
 
 def detect_rsi_divergence(candles_1h, lookback=20):
     if len(candles_1h) < lookback + 2:
