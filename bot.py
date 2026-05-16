@@ -87,7 +87,7 @@ def get_candles(granularity, limit=500):
         log.warning(f"No candles. gran={gran}")
         return []
     candles = []
-    for c in reversed(raw):
+    for c in raw:
         try:
             candles.append({
                 "time": int(c[0]), "open": float(c[1]),
@@ -96,6 +96,12 @@ def get_candles(granularity, limit=500):
             })
         except Exception:
             pass
+    # Sort by time ascending (oldest first) regardless of API order
+    candles.sort(key=lambda x: x["time"])
+    if candles:
+        log.debug(f"Candles {gran}: {len(candles)} total, "
+                  f"first={datetime.fromtimestamp(candles[0]['time']/1000,tz=timezone.utc).strftime('%m-%d %H:%M')} "
+                  f"last={datetime.fromtimestamp(candles[-1]['time']/1000,tz=timezone.utc).strftime('%m-%d %H:%M')}")
     return candles
 
 def place_order_paper(side, qty, entry, sl, tp):
