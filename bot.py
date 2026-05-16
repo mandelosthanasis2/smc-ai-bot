@@ -165,27 +165,27 @@ class RealtimeData:
         with self.lock:
             c1h  = list(self.closes_1h)
             c15m = list(self.closes_15m)
-        # Replace last close with live price (not append!)
-        # This simulates the current open candle like TradingView does
-        if self.price > 0 and c1h:
-            c1h_live  = c1h[:-1]  + [self.price]  # replace last, not append
+        # Append live price as current open candle (like TradingView does)
+        # History already contains only CLOSED candles
+        # So we append current price to simulate the real-time RSI
+        if self.price > 0:
+            self.rsi_1h  = self._calc_rsi(c1h  + [self.price])
+            self.rsi_15m = self._calc_rsi(c15m + [self.price])
         else:
-            c1h_live  = c1h
-        if self.price > 0 and c15m:
-            c15m_live = c15m[:-1] + [self.price]  # replace last, not append
-        else:
-            c15m_live = c15m
-        self.rsi_1h  = self._calc_rsi(c1h_live)
-        self.rsi_15m = self._calc_rsi(c15m_live)
+            self.rsi_1h  = self._calc_rsi(c1h)
+            self.rsi_15m = self._calc_rsi(c15m)
 
     def load_history(self):
         log.info("Loading candle history (500 candles each)...")
         for gran, attr in [("1H","closes_1h"), ("15m","closes_15m"), ("4H","closes_4h")]:
             candles = get_candles(gran, 500)
             if candles:
+                # Exclude last candle - it may be currently open (not closed yet)
+                # Only use confirmed closed candles for RSI history
+                closed = candles[:-1]
                 with self.lock:
-                    getattr(self, attr).extend([c["close"] for c in candles])
-                log.info(f"Loaded {len(candles)} {gran} candles")
+                    getattr(self, attr).extend([c["close"] for c in closed])
+                log.info(f"Loaded {len(closed)} {gran} closed candles (excluded current open)")
         r = bitget_get("/api/v2/mix/market/ticker", {
             "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE
         })
@@ -215,18 +215,24 @@ class RealtimeData:
                 # Candle closed (confirm=1)
                 elif chan.startswith("candle") and isinstance(item, list) and len(item) >= 5:
                     # Bitget candle ws: [ts, o, h, l, c, vol, quoteVol, confirm]
-                    if len(item) >= 8 and str(item[7]) == "1":
-                        close_price = float(item[4])
+                    # confirm=1 means candle is CLOSED
+                    confirm = str(item[7]) if len(item) >= 8 else "0"
+                    close_price = float(item[4])
+                    if confirm == "1":
+                        # Candle confirmed closed - add to history
                         if "1H"  in chan:
                             with self.lock: self.closes_1h.append(close_price)
-                            log.info(f"1H candle closed: {close_price:.2f}")
+                            log.info(f"1H candle CLOSED: {close_price:.2f}")
                         elif "15m" in chan:
                             with self.lock: self.closes_15m.append(close_price)
-                            log.info(f"15m candle closed: {close_price:.2f}")
+                            log.info(f"15m candle CLOSED: {close_price:.2f}")
                         elif "4H"  in chan:
                             with self.lock: self.closes_4h.append(close_price)
-                        self._update_rsi()
-                        log.info(f"RSI updated: 1H={self.rsi_1h} 15m={self.rsi_15m}")
+                        # Update live price to candle close
+                        self.price = close_price
+                    # Always recalculate RSI with current live price
+                    self._update_rsi()
+                    log.info(f"RSI: 1H={self.rsi_1h} 15m={self.rsi_15m} (confirmed={confirm})")
         except Exception as e:
             log.warning(f"WS parse error: {e}")
 
