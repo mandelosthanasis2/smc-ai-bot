@@ -145,21 +145,32 @@ class RealtimeData:
         self.initialized = False
 
     def _calc_rsi(self, closes, period=14):
-        """Wilder RSI - identical to TradingView."""
+        """
+        Wilder RSI - identical to TradingView.
+        Needs minimum 100 candles for accurate result.
+        """
         closes = list(closes)
-        if len(closes) < period + 1:
+        n = len(closes)
+        if n < period + 1:
             return 50.0
-        gains  = [max(closes[i] - closes[i-1], 0) for i in range(1, period+1)]
-        losses = [max(closes[i-1] - closes[i], 0) for i in range(1, period+1)]
+
+        # Calculate all price changes
+        changes = [closes[i] - closes[i-1] for i in range(1, n)]
+
+        # Seed with first `period` changes
+        gains  = [max(c, 0) for c in changes[:period]]
+        losses = [max(-c, 0) for c in changes[:period]]
         ag = sum(gains)  / period
         al = sum(losses) / period
-        for i in range(period+1, len(closes)):
-            d  = closes[i] - closes[i-1]
-            ag = (ag * (period-1) + max(d,  0)) / period
-            al = (al * (period-1) + max(-d, 0)) / period
+
+        # Wilder smoothing over remaining changes
+        for c in changes[period:]:
+            ag = (ag * (period - 1) + max(c,  0)) / period
+            al = (al * (period - 1) + max(-c, 0)) / period
+
         if al == 0:
             return 100.0
-        return round(100 - 100 / (1 + ag/al), 2)
+        return round(100 - 100 / (1 + ag / al), 2)
 
     def _update_rsi(self):
         with self.lock:
@@ -195,7 +206,15 @@ class RealtimeData:
             pass
         self._update_rsi()
         self.initialized = True
+        # Log detailed info to verify RSI accuracy
+        with self.lock:
+            c1h  = list(self.closes_1h)
+            c15m = list(self.closes_15m)
         log.info(f"Ready: price={self.price:.2f} RSI_1H={self.rsi_1h} RSI_15m={self.rsi_15m}")
+        log.info(f"1H closes: count={len(c1h)} first={c1h[0]:.2f} last={c1h[-1]:.2f}")
+        log.info(f"15m closes: count={len(c15m)} first={c15m[0]:.2f} last={c15m[-1]:.2f}")
+        log.info(f"1H last 5 closes: {[round(x,2) for x in c1h[-5:]]}")
+        log.info(f"RSI with live price appended: 1H={self._calc_rsi(c1h+[self.price])} 15m={self._calc_rsi(c15m+[self.price])}")
 
     def on_ws_message(self, ws, message):
         try:
