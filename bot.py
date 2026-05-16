@@ -165,8 +165,16 @@ class RealtimeData:
         with self.lock:
             c1h  = list(self.closes_1h)
             c15m = list(self.closes_15m)
-        self.rsi_1h  = self._calc_rsi(c1h)
-        self.rsi_15m = self._calc_rsi(c15m)
+        # Include live price as the current (unfinished) candle close
+        # This makes RSI match TradingView real-time value
+        if self.price > 0:
+            c1h_live  = c1h  + [self.price]
+            c15m_live = c15m + [self.price]
+        else:
+            c1h_live  = c1h
+            c15m_live = c15m
+        self.rsi_1h  = self._calc_rsi(c1h_live)
+        self.rsi_15m = self._calc_rsi(c15m_live)
 
     def load_history(self):
         log.info("Loading candle history (500 candles each)...")
@@ -200,6 +208,7 @@ class RealtimeData:
                 # Ticker - live price
                 if chan == "ticker" and "lastPr" in item:
                     self.price = float(item["lastPr"])
+                    self._update_rsi()  # recalculate RSI with live price
 
                 # Candle closed (confirm=1)
                 elif chan.startswith("candle") and isinstance(item, list) and len(item) >= 5:
@@ -260,6 +269,7 @@ class RealtimeData:
                         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE
                     })
                     self.price = float(r["data"][0]["lastPr"])
+                    self._update_rsi()  # keep RSI fresh via polling too
                 except Exception:
                     pass
                 time.sleep(3)
