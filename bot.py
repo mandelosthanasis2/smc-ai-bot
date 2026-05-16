@@ -450,27 +450,119 @@ def check_position(price):
             save_state()
             return
 
-    hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or \
-             (pos["type"] == "SHORT" and price <= pos["tp"])
-    hit_sl = (pos["type"] == "LONG"  and price <= pos["sl"]) or \
-             (pos["type"] == "SHORT" and price >= pos["sl"])
+    entry    = pos["entry"]
+    tp       = pos["tp"]
+    qty      = pos["qty"]
+    is_long  = pos["type"] == "LONG"
+
+    # ── TP distance & progress ────────────────────────────────────
+    tp_dist   = abs(tp - entry)
+    if tp_dist == 0:
+        return
+    progress  = (price - entry) / tp_dist if is_long else (entry - price) / tp_dist
+
+    # ── Phase 1: 50% to TP → move SL to entry (break even) ───────
+    if not pos.get("phase1_done") and progress >= 0.50:
+        pos["sl"]          = entry
+        pos["phase1_done"] = True
+        log.info(f"Phase 1: SL moved to entry (break even) @ {entry:.2f}")
+        send_telegram(
+            f"🔒 <b>BREAK EVEN SET</b> {pos['type']}\n"
+            f"50% to TP reached\n"
+            f"SL moved to entry: ${entry:,.2f}"
+        )
+        save_state()
+
+    # ── Phase 2: 70% to TP → close 30% of position ───────────────
+    if not pos.get("phase2_done") and progress >= 0.70:
+        partial_qty = round(qty * 0.30, 4)
+        partial_pnl = (price - entry) * partial_qty if is_long else (entry - price) * partial_qty
+        partial_pnl = round(partial_pnl, 2)
+        pos["qty"]         = round(qty - partial_qty, 4)
+        pos["phase2_done"] = True
+        state["pnl_total"] = round(state["pnl_total"] + partial_pnl, 2)
+        state["balance"]   = round(state["balance"]   + partial_pnl, 2)
+        log.info(f"Phase 2: Closed 30% @ {price:.2f} | partial PnL={partial_pnl:+.2f}")
+        send_telegram(
+            f"💰 <b>PARTIAL CLOSE 30%</b> {pos['type']}\n"
+            f"Price: ${price:,.2f}\n"
+            f"Partial PnL: +${partial_pnl:.2f}\n"
+            f"Remaining: {pos['qty']:.4f} BTC"
+        )
+        save_state()
+
+    # ── Phase 3: Past TP → activate trailing stop ─────────────────
+    past_tp = (is_long and price >= tp) or (not is_long and price <= tp)
+    if past_tp:
+        if not pos.get("trailing_active"):
+            pos["trailing_active"] = True
+            pos["trailing_high"]   = price
+            log.info(f"Phase 3: Trailing stop activated @ {price:.2f}")
+            send_telegram(
+                f"🚀 <b>TRAILING STOP ACTIVE</b> {pos['type']}\n"
+                f"Passed TP: ${tp:,.2f}\n"
+                f"Trailing 1% from high"
+            )
+
+        # Update trailing high
+        if is_long and price > pos.get("trailing_high", price):
+            pos["trailing_high"] = price
+        elif not is_long and price < pos.get("trailing_high", price):
+            pos["trailing_high"] = price
+
+        # Check if trailing stop hit (-1% from high)
+        trailing_high = pos.get("trailing_high", price)
+        trailing_sl   = trailing_high * 0.99 if is_long else trailing_high * 1.01
+        hit_trailing  = (is_long and price <= trailing_sl) or (not is_long and price >= trailing_sl)
+
+        if hit_trailing:
+            pnl = (price - entry) * pos["qty"] if is_long else (entry - price) * pos["qty"]
+            pnl = round(pnl, 2)
+            state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
+            state["balance"]   = round(state["balance"]   + pnl, 2)
+            state["wins"]     += 1
+            state["trades"].append({
+                "type": pos["type"], "entry": entry, "close": price,
+                "pnl": pnl, "result": "WIN",
+                "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "news_score": pos.get("news_score", 0),
+                "divergence": pos.get("has_divergence", False),
+            })
+            wins = state["wins"]; losses = state["losses"]
+            log.info(f"Phase 4: Trailing stop hit @ {price:.2f} | PnL={pnl:+.2f}")
+            send_telegram(
+                f"🏆 <b>TRAILING STOP HIT</b> {pos['type']}\n"
+                f"High: ${trailing_high:,.2f}\n"
+                f"Close: ${price:,.2f}\n"
+                f"PnL: +${pnl:.2f}\n"
+                f"Balance: ${state['balance']:,.2f}\n"
+                f"W/L: {wins}W/{losses}L"
+            )
+            if TRADING_MODE == "LIVE":
+                close_position_live(pos["type"])
+            state["position"] = None
+            save_state()
+        return
+
+    # ── Normal TP / SL check ──────────────────────────────────────
+    hit_tp = (is_long  and price >= tp) or (not is_long and price <= tp)
+    hit_sl = (is_long  and price <= pos["sl"]) or (not is_long and price >= pos["sl"])
 
     if not hit_tp and not hit_sl:
         return
 
-    close_price = pos["tp"] if hit_tp else pos["sl"]
-    pnl = ((close_price - pos["entry"]) if pos["type"] == "LONG"
-           else (pos["entry"] - close_price)) * pos["qty"]
+    close_price = tp if hit_tp else pos["sl"]
+    pnl = (close_price - entry) * pos["qty"] if is_long else (entry - close_price) * pos["qty"]
     pnl = round(pnl, 2)
 
-    log.info(f"Position closed: {'TP ✅' if hit_tp else 'SL ❌'} | PnL={pnl:+.2f}")
+    log.info(f"Position closed: {'TP' if hit_tp else 'SL'} @ {close_price:.2f} | PnL={pnl:+.2f}")
     state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
     state["balance"]   = round(state["balance"]   + pnl, 2)
     if hit_tp: state["wins"]   += 1
     else:      state["losses"] += 1
 
     state["trades"].append({
-        "type": pos["type"], "entry": pos["entry"], "close": close_price,
+        "type": pos["type"], "entry": entry, "close": close_price,
         "pnl": pnl, "result": "WIN" if hit_tp else "LOSS",
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "news_score": pos.get("news_score", 0),
@@ -696,15 +788,35 @@ def check_position_b(price):
         save_state_b()
         return
 
-    hit_tp = (pos["type"] == "LONG"  and price >= pos["tp"]) or              (pos["type"] == "SHORT" and price <= pos["tp"])
-    hit_sl = (pos["type"] == "LONG"  and price <= pos["sl"]) or              (pos["type"] == "SHORT" and price >= pos["sl"])
+    entry   = pos["entry"]
+    tp      = pos["tp"]
+    qty     = pos["qty"]
+    is_long = pos["type"] == "LONG"
+
+    # ── Phase 1: 50% to TP → move SL to entry (break even) ───────
+    tp_dist  = abs(tp - entry)
+    progress = (price - entry) / tp_dist if (is_long and tp_dist > 0) else (entry - price) / tp_dist if tp_dist > 0 else 0
+
+    if not pos.get("phase1_done") and progress >= 0.50:
+        pos["sl"]          = entry
+        pos["phase1_done"] = True
+        log.info(f"[B] Phase 1: SL moved to entry (break even) @ {entry:.2f}")
+        send_telegram(
+            f"🔒 <b>[B] BREAK EVEN SET</b> {pos['type']}\n"
+            f"50% to TP reached\n"
+            f"SL moved to entry: ${entry:,.2f}"
+        )
+        save_state_b()
+
+    # ── Normal TP / SL check ──────────────────────────────────────
+    hit_tp = (is_long  and price >= tp) or (not is_long and price <= tp)
+    hit_sl = (is_long  and price <= pos["sl"]) or (not is_long and price >= pos["sl"])
 
     if not hit_tp and not hit_sl:
         return
 
-    close_price = pos["tp"] if hit_tp else pos["sl"]
-    pnl = ((close_price - pos["entry"]) if pos["type"] == "LONG"
-           else (pos["entry"] - close_price)) * pos["qty"]
+    close_price = tp if hit_tp else pos["sl"]
+    pnl = (close_price - entry) * qty if is_long else (entry - close_price) * qty
     pnl = round(pnl, 2)
 
     state_b["pnl_total"] = round(state_b["pnl_total"] + pnl, 2)
@@ -713,7 +825,7 @@ def check_position_b(price):
     else:      state_b["losses"] += 1
 
     state_b["trades"].append({
-        "type": pos["type"], "entry": pos["entry"], "close": close_price,
+        "type": pos["type"], "entry": entry, "close": close_price,
         "pnl": pnl, "result": "WIN" if hit_tp else "LOSS",
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_divergence", False),
@@ -864,27 +976,41 @@ def bot_loop():
         f"SL: max 1.5% from entry 🔒"
     )
 
+    last_run_a = 0  # timestamp of last Strategy A run
+
     while state["running"]:
         try:
-            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            state["last_cycle"]   = now
-            state_b["last_cycle"] = now
+            now     = datetime.now(timezone.utc)
+            now_str = now.strftime("%Y-%m-%d %H:%M UTC")
+            now_ts  = now.timestamp()
 
-            # Strategy A: Daily box + 1H entry
-            run_strategy()
+            cycle_a = int(os.environ.get("CYCLE_SECONDS", "60"))
 
-            # Strategy B: 1H box + 15m entry
-            run_strategy_b()
+            # Strategy A: runs every 60s
+            if now_ts - last_run_a >= cycle_a:
+                state["last_cycle"] = now_str
+                try:
+                    run_strategy()
+                except Exception as e:
+                    log.error(f"Strategy A error: {e}")
+                    state["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                    state["errors"] = state["errors"][-10:]
+                save_state()
+                last_run_a = now_ts
+
+            # Strategy B: runs every 30s
+            state_b["last_cycle"] = now_str
+            try:
+                run_strategy_b()
+            except Exception as e:
+                log.error(f"Strategy B error: {e}")
+                state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                state_b["errors"] = state_b["errors"][-10:]
+            save_state_b()
 
         except Exception as e:
-            log.error(f"Strategy error: {e}")
-            state["errors"].append(f"{datetime.now(timezone.utc).strftime('%H:%M')} {str(e)[:80]}")
-            state["errors"] = state["errors"][-10:]
+            log.error(f"Main loop error: {e}")
 
-        cycle = int(os.environ.get("CYCLE_SECONDS", "60"))
-        save_state()
-        save_state_b()
-        log.info(f"Next cycle in {cycle}s")
-        time.sleep(cycle)
+        time.sleep(30)  # Strategy B cycle = 30s
 
 bot_thread = threading.Thread(target=bot_loop, daemon=True)
