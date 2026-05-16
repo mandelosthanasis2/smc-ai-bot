@@ -1,888 +1,1136 @@
 """
-bot.py - SMC AI Trading Bot v3
-WebSocket real-time price + RSI from Bitget
-Strategy A: Daily box + 1H RSI
-Strategy B: 1H box + 15m RSI
+main.py — SMC AI Bot Dashboard v2
+Beautiful UI with TradingView chart embedded
 """
 
-import os
-import json
-import time
-import logging
-import threading
-import requests
-import feedparser
-import websocket
-from collections import deque
-from datetime import datetime, timezone
-import anthropic
-from config import *
+from flask import Flask, render_template_string, jsonify
+from bot import state, state_b, bot_thread
+from config import PORT
 
-# -- LOGGING ------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+app = Flask(__name__)
+bot_thread.start()
 
-# -- TELEGRAM -----------------------------------------------------
-def send_telegram(msg):
-    token   = os.environ.get("TELEGRAM_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-            timeout=5
-        )
-    except Exception as e:
-        log.warning(f"Telegram error: {e}")
+DASHBOARD = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMC AI Bot</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-# -- BITGET API ---------------------------------------------------
-BITGET_BASE      = "https://api.bitget.com"
-BITGET_SYMBOL    = "BTCUSDT"
-BITGET_PROD_TYPE = "USDT-FUTURES"
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-def bitget_get(path, params=None):
-    try:
-        r = requests.get(BITGET_BASE + path, params=params, timeout=10)
-        return r.json()
-    except Exception as e:
-        log.error(f"Bitget GET error: {e}")
-        return {}
+  :root {
+    --bg:       #0a0e1a;
+    --bg2:      #111827;
+    --bg3:      #1a2235;
+    --border:   #1e2d45;
+    --border2:  #243550;
+    --text:     #e2e8f0;
+    --text2:    #94a3b8;
+    --text3:    #475569;
+    --green:    #10b981;
+    --green2:   #059669;
+    --red:      #ef4444;
+    --red2:     #dc2626;
+    --yellow:   #f59e0b;
+    --blue:     #3b82f6;
+    --purple:   #8b5cf6;
+    --glow-g:   0 0 20px rgba(16,185,129,0.15);
+    --glow-r:   0 0 20px rgba(239,68,68,0.15);
+    --glow-y:   0 0 20px rgba(245,158,11,0.15);
+  }
 
-def bitget_signed(method, path, body=None):
-    import hmac, hashlib, base64
-    if not BITGET_API_KEY:
-        return {}
-    ts       = str(int(time.time() * 1000))
-    body_str = json.dumps(body or {})
-    msg      = ts + method.upper() + path + (body_str if method == "POST" else "")
-    sig      = base64.b64encode(
-        hmac.new(BITGET_API_SECRET.encode(), msg.encode(), hashlib.sha256).digest()
-    ).decode()
-    headers = {
-        "ACCESS-KEY": BITGET_API_KEY, "ACCESS-SIGN": sig,
-        "ACCESS-TIMESTAMP": ts, "ACCESS-PASSPHRASE": BITGET_PASSPHRASE,
-        "Content-Type": "application/json", "locale": "en-US",
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── LAYOUT ── */
+  .app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; height: 100vh; overflow: hidden; }
+  .main-col { grid-column: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .side-col  { grid-column: 2; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  .logo span { color: var(--green); }
+  .badge {
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .badge-paper  { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+  .badge-live   { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+  .badge-green  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+  .badge-red    { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+  .badge-gray   { background: rgba(71,85,105,0.3);   color: var(--text2);  border: 1px solid var(--border); }
+  .topbar-right { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text3); }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── CHART AREA ── */
+  .chart-wrap {
+    flex: 1;
+    background: var(--bg);
+    height: calc(100vh - 100px);
+    min-height: 400px;
+    position: relative;
+    overflow: hidden;
+  }
+  .chart-wrap > div,
+  .chart-wrap .tradingview-widget-container,
+  .chart-wrap .tradingview-widget-container__widget {
+    height: 100% !important;
+    width: 100% !important;
+  }
+  .chart-wrap iframe {
+    height: 100% !important;
+    width: 100% !important;
+    border: none !important;
+  }
+  .chart-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tf-btn {
+    font-size: 11px; font-weight: 500; padding: 4px 10px;
+    border-radius: 6px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--text2);
+    transition: all 0.15s;
+  }
+  .tf-btn:hover, .tf-btn.active {
+    background: var(--blue); color: white; border-color: var(--blue);
+  }
+  .chart-label { font-size: 11px; color: var(--text3); margin-left: auto; }
+  #tv-chart { width: 100%; height: 100%; }
+
+  /* ── SIDE PANEL ── */
+  .side-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .side-title {
+    font-size: 10px; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+  }
+
+  /* ── PRICE HEADER ── */
+  .price-display { padding: 16px; border-bottom: 1px solid var(--border); }
+  .price-symbol { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .price-main { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+  .price-change { font-size: 12px; margin-top: 2px; }
+
+  /* ── STATS GRID ── */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .stat-value { font-size: 16px; font-weight: 600; }
+
+  /* ── SIGNAL CARD ── */
+  .signal-card {
+    border-radius: 10px; padding: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+  }
+  .signal-type {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 700; padding: 5px 14px;
+    border-radius: 8px; margin-bottom: 10px;
+  }
+  .signal-long  { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+  .signal-short { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+  .signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2); border: 1px solid var(--border); }
+  .signal-text  { font-size: 11px; color: var(--text2); line-height: 1.6; }
+
+  /* ── BOX LEVELS ── */
+  .box-levels { display: flex; flex-direction: column; gap: 6px; }
+  .level-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-radius: 8px;
+  }
+  .level-pdh { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.2); }
+  .level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+  .level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+  .level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .level-desc { font-size: 9px; opacity: 0.6; margin-top: 1px; }
+  .level-price { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* ── POSITION CARD ── */
+  .pos-card {
+    background: var(--bg3); border-radius: 10px; padding: 14px;
+    border: 1px solid rgba(245,158,11,0.3);
+  }
+  .pos-row {
+    display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .pos-row:last-child { border-bottom: none; }
+  .pos-key { color: var(--text2); }
+
+  /* ── RSI BAR ── */
+  .rsi-wrap { margin-top: 8px; }
+  .rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .rsi-bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+
+  /* ── NEWS ── */
+  .news-score-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; margin-left: 6px;
+  }
+  .news-summary { font-size: 11px; color: var(--text2); margin-top: 6px; line-height: 1.5; }
+  .news-hl { font-size: 10px; color: var(--text3); padding: 4px 0; border-bottom: 1px solid var(--border); }
+
+  /* ── TRADE TABLE ── */
+  .trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 500; }
+  .trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
+  .pill {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+  }
+  .pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
+  .pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
+  .pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
+  .pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
+  .pill-div   { background: rgba(245,158,11,0.15); color: var(--yellow);}
+
+  /* ── ERRORS ── */
+  .error-item { font-size: 10px; color: var(--red); padding: 3px 0; }
+
+  /* ── BOTTOM BAR ── */
+  .bottombar {
+    padding: 10px 20px;
+    background: var(--bg2); border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10px; color: var(--text3);
+  }
+
+  /* ── MOBILE ── */
+  @media (max-width: 900px) {
+    .app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto;
     }
-    try:
-        if method == "GET":
-            r = requests.get(BITGET_BASE + path, headers=headers, timeout=10)
-        else:
-            r = requests.post(BITGET_BASE + path, headers=headers, data=body_str, timeout=10)
-        return r.json()
-    except Exception as e:
-        log.error(f"Bitget signed error: {e}")
-        return {}
+    .main-col { grid-column: 1; grid-row: 1; }
+    .side-col {
+      grid-column: 1; grid-row: 2;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      max-height: none;
+    }
+    .chart-wrap {
+      height: 55vw;
+      min-height: 280px;
+      max-height: 420px;
+    }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+    .logo { font-size: 14px; }
+    .price-main { font-size: 22px; }
+  }
+  @media (max-width: 480px) {
+    .chart-wrap { height: 60vw; min-height: 240px; }
+    .tf-btn { padding: 3px 7px; font-size: 10px; }
+    .side-section { padding: 12px; }
+  }
 
-def get_candles(granularity, limit=500):
-    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H", "15m": "15m"}
-    gran     = gran_map.get(granularity, "1H")
-    r        = bitget_get("/api/v2/mix/market/candles", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "granularity": gran, "limit": str(limit),
-    })
-    raw = r.get("data", [])
-    if not raw:
-        log.warning(f"No candles. gran={gran}")
-        return []
-    candles = []
-    for c in reversed(raw):
-        try:
-            candles.append({
-                "time": int(c[0]), "open": float(c[1]),
-                "high": float(c[2]), "low": float(c[3]),
-                "close": float(c[4]), "volume": float(c[5]),
-            })
-        except Exception:
-            pass
-    return candles
+  .divider { width: 1px; height: 16px; background: var(--border); }
+  .text-green { color: var(--green); }
+  .text-red   { color: var(--red);   }
+  .text-yellow{ color: var(--yellow);}
+  .text-blue  { color: var(--blue);  }
+  .text-gray  { color: var(--text2); }
+  .text-dim   { color: var(--text3); }
+</style>
+</head>
+<body>
 
-def place_order_paper(side, qty, entry, sl, tp):
-    log.info(f"[PAPER] {side} qty={qty:.4f} @ {entry:.2f} SL={sl:.2f} TP={tp:.2f}")
-    return f"PAPER_{int(time.time())}"
+<div class="app">
 
-def place_order_live(side, qty, sl, tp):
-    bitget_signed("POST", "/api/v2/mix/account/set-leverage", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginCoin": "USDT", "leverage": str(LEVERAGE),
-        "holdSide": "long" if side == "LONG" else "short",
-    })
-    r = bitget_signed("POST", "/api/v2/mix/order/place-order", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginMode": "isolated", "marginCoin": "USDT",
-        "size": str(round(qty, 4)),
-        "side": "buy" if side == "LONG" else "sell",
-        "tradeSide": "open", "orderType": "market",
-        "presetStopSurplusPrice": str(round(tp, 2)),
-        "presetStopLossPrice":    str(round(sl, 2)),
-    })
-    log.info(f"Live order: {r}")
-    return r.get("data", {}).get("orderId", None)
+  <!-- ══ MAIN COLUMN ══ -->
+  <div class="main-col">
 
-def close_position_live(side, qty):
-    bitget_signed("POST", "/api/v2/mix/order/place-order", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginCoin": "USDT",
-        "side": "sell" if side == "LONG" else "buy",
-        "tradeSide": "close", "orderType": "market",
-        "size": str(qty),
-    })
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="logo">SMC <span>AI</span> Bot</div>
+        <span class="badge {{ 'badge-paper' if mode == 'PAPER' else 'badge-live' }}">{{ mode }}</span>
+        <span class="badge badge-gray">BTC/USDT PERP</span>
+        <span class="badge badge-gray">BITGET</span>
+        {% if position %}
+        <span class="badge {{ 'badge-green' if position.type == 'LONG' else 'badge-red' }}">
+          {{ position.type }} OPEN
+        </span>
+        {% endif %}
+      </div>
+      <div class="topbar-right">
+        <div class="pulse"></div>
+        <span>LIVE</span>
+        <div class="divider"></div>
+        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
+      </div>
+    </div>
 
-# =================================================================
-# REAL-TIME DATA via WebSocket + REST history
-# =================================================================
+    <!-- CHART TOOLBAR -->
+    <div class="chart-toolbar">
+      <button class="tf-btn" onclick="setTF('1')">1m</button>
+      <button class="tf-btn" onclick="setTF('5')">5m</button>
+      <button class="tf-btn" onclick="setTF('15')">15m</button>
+      <button class="tf-btn active" onclick="setTF('60')" id="tf-60">1H</button>
+      <button class="tf-btn" onclick="setTF('240')">4H</button>
+      <button class="tf-btn" onclick="setTF('D')">1D</button>
+      <span class="chart-label">powered by TradingView</span>
+    </div>
 
-class RealtimeData:
-    def __init__(self):
-        self.lock        = threading.Lock()
-        self.closes_1h   = deque(maxlen=600)
-        self.closes_15m  = deque(maxlen=600)
-        self.closes_4h   = deque(maxlen=600)
-        self.price       = 0.0
-        self.rsi_1h      = 50.0
-        self.rsi_15m     = 50.0
-        self.initialized = False
+    <!-- TRADINGVIEW CHART -->
+    <div class="chart-wrap">
+      <div class="tradingview-widget-container" id="tv-chart" style="height:100%;width:100%;">
+        <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%;"></div>
+        <div class="tradingview-widget-copyright" style="display:none;"></div>
+      </div>
+    </div>
 
-    def _calc_rsi(self, closes, period=14):
-        """Wilder RSI - identical to TradingView."""
-        closes = list(closes)
-        if len(closes) < period + 1:
-            return 50.0
-        gains  = [max(closes[i] - closes[i-1], 0) for i in range(1, period+1)]
-        losses = [max(closes[i-1] - closes[i], 0) for i in range(1, period+1)]
-        ag = sum(gains)  / period
-        al = sum(losses) / period
-        for i in range(period+1, len(closes)):
-            d  = closes[i] - closes[i-1]
-            ag = (ag * (period-1) + max(d,  0)) / period
-            al = (al * (period-1) + max(-d, 0)) / period
-        if al == 0:
-            return 100.0
-        return round(100 - 100 / (1 + ag/al), 2)
+    <!-- BOTTOM BAR -->
+    <div class="bottombar">
+      <span>⚠ PAPER TRADING · NO REAL MONEY · EDUCATIONAL USE ONLY</span>
+      <span>Auto-refresh 20s</span>
+    </div>
 
-    def _update_rsi(self):
-        with self.lock:
-            c1h  = list(self.closes_1h)
-            c15m = list(self.closes_15m)
-        # Append live price as current open candle (like TradingView does)
-        # History already contains only CLOSED candles
-        # So we append current price to simulate the real-time RSI
-        if self.price > 0:
-            self.rsi_1h  = self._calc_rsi(c1h  + [self.price])
-            self.rsi_15m = self._calc_rsi(c15m + [self.price])
-        else:
-            self.rsi_1h  = self._calc_rsi(c1h)
-            self.rsi_15m = self._calc_rsi(c15m)
+  </div>
 
-    def load_history(self):
-        log.info("Loading candle history (500 candles each)...")
-        for gran, attr in [("1H","closes_1h"), ("15m","closes_15m"), ("4H","closes_4h")]:
-            candles = get_candles(gran, 500)
-            if candles:
-                # Exclude last candle - it may be currently open (not closed yet)
-                # Only use confirmed closed candles for RSI history
-                closed = candles[:-1]
-                with self.lock:
-                    getattr(self, attr).extend([c["close"] for c in closed])
-                log.info(f"Loaded {len(closed)} {gran} closed candles (excluded current open)")
-        r = bitget_get("/api/v2/mix/market/ticker", {
-            "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE
-        })
-        try:
-            self.price = float(r["data"][0]["lastPr"])
-        except Exception:
-            pass
-        self._update_rsi()
-        self.initialized = True
-        log.info(f"Ready: price={self.price:.2f} RSI_1H={self.rsi_1h} RSI_15m={self.rsi_15m}")
+  <!-- ══ SIDE COLUMN ══ -->
+  <div class="side-col">
 
-    def on_ws_message(self, ws, message):
-        try:
-            data = json.loads(message)
-            if "data" not in data:
-                return
-            arg   = data.get("arg", {})
-            chan  = arg.get("channel", "")
-            items = data["data"]
+    <!-- PRICE -->
+    <div class="price-display">
+      <div class="price-symbol">BTCUSDT · Perpetual</div>
+      <div class="price-main text-green price-main">
+        ${{ "{:,.2f}".format(current_price) }}
+      </div>
+      <div class="price-change">
+        <span class="badge badge-gray" id="rsi-badge">RSI <span class="rsi-val">{{ rsi }}</span></span>
+        <span class="badge badge-paper" id="div-badge" style="margin-left:4px;display:{{ 'inline-block' if divergence else 'none' }};">📊 Divergence!</span>
+      </div>
+    </div>
 
-            for item in items:
-                # Ticker - live price
-                if chan == "ticker" and "lastPr" in item:
-                    self.price = float(item["lastPr"])
-                    self._update_rsi()  # recalculate RSI with live price
+    <!-- STATS -->
+    <div class="side-section">
+      <div class="side-title">Performance</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Balance</div>
+          <div class="stat-value text-green balance-val">${{ "{:,.0f}".format(balance) }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total P&L</div>
+          <div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }} pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Win Rate</div>
+          <div class="stat-value text-yellow wr-val">{{ win_rate }}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">W / L</div>
+          <div class="stat-value text-gray wl-val">{{ wins }}W · {{ losses }}L</div>
+        </div>
+      </div>
 
-                # Candle closed (confirm=1)
-                elif chan.startswith("candle") and isinstance(item, list) and len(item) >= 5:
-                    # Bitget candle ws: [ts, o, h, l, c, vol, quoteVol, confirm]
-                    # confirm=1 means candle is CLOSED
-                    confirm = str(item[7]) if len(item) >= 8 else "0"
-                    close_price = float(item[4])
-                    if confirm == "1":
-                        # Candle confirmed closed - add to history
-                        if "1H"  in chan:
-                            with self.lock: self.closes_1h.append(close_price)
-                            log.info(f"1H candle CLOSED: {close_price:.2f}")
-                        elif "15m" in chan:
-                            with self.lock: self.closes_15m.append(close_price)
-                            log.info(f"15m candle CLOSED: {close_price:.2f}")
-                        elif "4H"  in chan:
-                            with self.lock: self.closes_4h.append(close_price)
-                        # Update live price to candle close
-                        self.price = close_price
-                    # Always recalculate RSI with current live price
-                    self._update_rsi()
-                    log.info(f"RSI: 1H={self.rsi_1h} 15m={self.rsi_15m} (confirmed={confirm})")
-        except Exception as e:
-            log.warning(f"WS parse error: {e}")
+      <!-- RSI Bar -->
+      <div class="rsi-wrap">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:10px;">
+          <span>RSI (14)</span><span>{{ rsi }}</span>
+        </div>
+        <div class="rsi-bar-bg">
+          <div class="rsi-bar-fill" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:2px;">
+          <span>0</span><span>30</span><span>70</span><span>100</span>
+        </div>
+      </div>
+    </div>
 
-    def start_websocket(self):
-        def run():
-            while True:
-                try:
-                    ws = websocket.WebSocketApp(
-                        "wss://ws.bitget.com/v2/ws/public",
-                        on_open    = self._on_open,
-                        on_message = self.on_ws_message,
-                        on_error   = lambda ws, e: log.error(f"WS error: {e}"),
-                        on_close   = lambda ws, *a: log.warning("WS closed"),
-                    )
-                    ws.run_forever(ping_interval=20, ping_timeout=10)
-                except Exception as e:
-                    log.error(f"WS run error: {e}")
-                log.info("WS reconnecting in 5s...")
-                time.sleep(5)
+    <!-- SIGNAL -->
+    <div class="side-section">
+      <div class="side-title">Current Signal</div>
+      <div class="signal-card">
+        {% if 'LONG' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
+          <div class="signal-type signal-long">▲ LONG</div>
+        {% elif 'SHORT' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
+          <div class="signal-type signal-short">▼ SHORT</div>
+        {% elif 'HOLDING' in signal %}
+          <div class="signal-type signal-wait">◆ {{ position.type if position else 'HOLDING' }}</div>
+        {% else %}
+          <div class="signal-type signal-wait">◌ WAIT</div>
+        {% endif %}
+        <div class="signal-text">{{ signal }}</div>
+        {% if signal_time %}
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;">{{ signal_time }}</div>
+        {% endif %}
+      </div>
+    </div>
 
-        threading.Thread(target=run, daemon=True).start()
-        log.info("WebSocket started")
+    <!-- PREVIOUS DAY BOX -->
+    {% if box %}
+    <div class="side-section">
+      <div class="side-title">Previous Day Box · {{ box.date }}</div>
+      <div class="box-levels">
+        <div class="level-row level-pdh">
+          <div>
+            <div class="level-name text-red">PDH · Short Zone</div>
+            <div class="level-desc">RSI > 70 → Sell</div>
+          </div>
+          <div class="level-price text-red">${{ "{:,.2f}".format(box.high) }}</div>
+        </div>
+        <div class="level-row level-mid">
+          <div>
+            <div class="level-name text-yellow">MID · Take Profit</div>
+            <div class="level-desc">TP for both setups</div>
+          </div>
+          <div class="level-price text-yellow">${{ "{:,.2f}".format(box.mid) }}</div>
+        </div>
+        <div class="level-row level-pdl">
+          <div>
+            <div class="level-name text-green">PDL · Long Zone</div>
+            <div class="level-desc">RSI < 30 → Buy</div>
+          </div>
+          <div class="level-price text-green">${{ "{:,.2f}".format(box.low) }}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;gap:12px;">
+        <span>Size: ${{ "{:,.0f}".format(box.size) }}</span>
+        <span>R/R: 1:2</span>
+        <span>Risk: 2% (4% w/ div)</span>
+      </div>
+    </div>
+    {% endif %}
 
-    def _on_open(self, ws):
-        log.info("WebSocket connected - subscribing...")
-        ws.send(json.dumps({
-            "op": "subscribe",
-            "args": [
-                {"instType": "USDT-FUTURES", "channel": "ticker",   "instId": "BTCUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "candle1H", "instId": "BTCUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "candle15m","instId": "BTCUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "candle4H", "instId": "BTCUSDT"},
-            ]
-        }))
+    <!-- OPEN POSITION -->
+    {% if position %}
+    <div class="side-section">
+      <div class="side-title">Open Position</div>
+      <div class="pos-card">
+        <div class="pos-row">
+          <span class="pos-key">Type</span>
+          <span class="pill {{ 'pill-long' if position.type == 'LONG' else 'pill-short' }}">
+            {{ position.type }}
+          </span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Entry</span>
+          <span>${{ "{:,.2f}".format(position.entry) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Take Profit</span>
+          <span class="text-green">${{ "{:,.2f}".format(position.tp) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Stop Loss</span>
+          <span class="text-red">${{ "{:,.2f}".format(position.sl) }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Size (BTC)</span>
+          <span>{{ position.qty }}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Divergence</span>
+          <span>{% if position.get('has_divergence') %}<span class="pill pill-div">🔥 DOUBLE</span>{% else %}Normal{% endif %}</span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">AI Score</span>
+          <span class="{{ 'text-green' if position.news_score > 0 else 'text-red' if position.news_score < 0 else 'text-gray' }}">
+            {{ position.news_score }}
+          </span>
+        </div>
+        <div class="pos-row">
+          <span class="pos-key">Opened</span>
+          <span class="text-dim">{{ position.time }}</span>
+        </div>
+        {% if position.news_summary %}
+        <div style="margin-top:8px;font-size:10px;color:var(--text2);line-height:1.5;">
+          📰 {{ position.news_summary[:100] }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
 
-    def start_polling(self):
-        """Fallback price polling every 3s."""
-        def poll():
-            while True:
-                try:
-                    r = bitget_get("/api/v2/mix/market/ticker", {
-                        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE
-                    })
-                    self.price = float(r["data"][0]["lastPr"])
-                    self._update_rsi()  # keep RSI fresh via polling too
-                except Exception:
-                    pass
-                time.sleep(3)
-        threading.Thread(target=poll, daemon=True).start()
+    <!-- AI NEWS -->
+    <div class="side-section">
+      <div class="side-title">
+        AI News Analysis
+        <span class="news-score-badge {{ 'badge-green' if news_score > 0 else 'badge-red' if news_score < 0 else 'badge-gray' }}">
+          Score: {{ news_score }}
+        </span>
+      </div>
+      {% if news_summary %}
+      <div class="news-summary">{{ news_summary }}</div>
+      {% endif %}
+      {% for h in headlines[:6] %}
+      <div class="news-hl">• {{ h }}</div>
+      {% endfor %}
+    </div>
 
-rt = RealtimeData()
+    <!-- ERRORS -->
+    {% if errors %}
+    <div class="side-section">
+      <div class="side-title" style="color:var(--red);">Recent Errors</div>
+      {% for e in errors[-3:] %}
+      <div class="error-item">{{ e }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
-# =================================================================
-# INDICATORS
-# =================================================================
+    <!-- TRADE HISTORY -->
+    {% if trades %}
+    <div class="side-section">
+      <div class="side-title">Trade History</div>
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>P&L</th>
+            <th>Result</th>
+            <th>Div</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in trades[-15:]|reverse %}
+          <tr>
+            <td class="text-dim">{{ t.time[5:16] }}</td>
+            <td><span class="pill {{ 'pill-long' if t.type == 'LONG' else 'pill-short' }}">{{ t.type }}</span></td>
+            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">
+              {{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}
+            </td>
+            <td><span class="pill {{ 'pill-win' if t.result == 'WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
+            <td>{% if t.get('divergence') %}<span class="text-yellow">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
 
-def detect_divergence(closes_list, highs, lows, lookback=20):
-    if len(closes_list) < lookback + 2:
-        return False, False
-    rsi_vals = []
-    for i in range(max(0, len(closes_list)-lookback), len(closes_list)):
-        rsi_vals.append(rt._calc_rsi(closes_list[:i+1]))
+  </div><!-- end side-col -->
+</div><!-- end app -->
 
-    h = highs[-lookback:] if len(highs) >= lookback else highs
-    l = lows[-lookback:]  if len(lows)  >= lookback else lows
+<!-- TRADINGVIEW WIDGET SCRIPT -->
+<script>
+let currentTF = '60';
 
-    ph, rh, pl, rl = [], [], [], []
-    for i in range(1, len(h)-1):
-        if h[i] > h[i-1] and h[i] > h[i+1]:
-            ph.append(h[i]); rh.append(rsi_vals[i] if i < len(rsi_vals) else 50)
-        if l[i] < l[i-1] and l[i] < l[i+1]:
-            pl.append(l[i]); rl.append(rsi_vals[i] if i < len(rsi_vals) else 50)
-
-    bear = len(ph)>=2 and ph[-1]>ph[-2] and rh[-1]<rh[-2]
-    bull = len(pl)>=2 and pl[-1]<pl[-2] and rl[-1]>rl[-2]
-    if bear: log.info(f"Bearish div: price {ph[-2]:.0f}->{ph[-1]:.0f} RSI {rh[-2]:.1f}->{rh[-1]:.1f}")
-    if bull: log.info(f"Bullish div: price {pl[-2]:.0f}->{pl[-1]:.0f} RSI {rl[-2]:.1f}->{rl[-1]:.1f}")
-    return bull, bear
-
-def find_4h_sr(candles_4h, price, lookback=50):
-    recent = candles_4h[-lookback:] if len(candles_4h)>lookback else candles_4h
-    highs, lows = [], []
-    for i in range(2, len(recent)-2):
-        h = recent[i]["high"]; l = recent[i]["low"]
-        if all(h >= recent[j]["high"] for j in [i-1,i-2,i+1,i+2]): highs.append(h)
-        if all(l <= recent[j]["low"]  for j in [i-1,i-2,i+1,i+2]): lows.append(l)
-    res = min([h for h in highs if h > price], default=price*1.02)
-    sup = max([l for l in lows  if l < price], default=price*0.98)
-    log.info(f"4H S/R: sup={sup:.2f} res={res:.2f}")
-    return sup, res
-
-def build_daily_box(candles_4h):
-    if not candles_4h: return None
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    days  = {}
-    for c in candles_4h:
-        d = datetime.fromtimestamp(c["time"]/1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        if d not in days: days[d] = {"high": c["high"], "low": c["low"]}
-        else:
-            days[d]["high"] = max(days[d]["high"], c["high"])
-            days[d]["low"]  = min(days[d]["low"],  c["low"])
-    sorted_d = sorted(days.keys())
-    log.info("Daily dates: " + str(sorted_d[-5:]))
-    yest = next((d for d in reversed(sorted_d) if d < today), None)
-    if not yest: return None
-    y = days[yest]
-    box = {"high": y["high"], "low": y["low"],
-           "mid":  round((y["high"]+y["low"])/2, 2),
-           "date": yest, "size": round(y["high"]-y["low"], 2)}
-    log.info(f"Daily Box: {yest} H={box['high']:.2f} L={box['low']:.2f} MID={box['mid']:.2f}")
-    return box
-
-def build_1h_box(candles_1h):
-    if len(candles_1h) < 2: return None
-    p = candles_1h[-2]
-    box = {"high": p["high"], "low": p["low"],
-           "mid":  round((p["high"]+p["low"])/2, 2),
-           "size": round(p["high"]-p["low"], 2),
-           "time": datetime.fromtimestamp(p["time"]/1000, tz=timezone.utc).strftime("%H:%M UTC")}
-    log.info(f"1H Box: H={box['high']:.2f} L={box['low']:.2f} MID={box['mid']:.2f}")
-    return box
-
-# =================================================================
-# PERSISTENT STATE
-# =================================================================
-
-STATE_FILE   = "/app/bot_state.json"
-STATE_FILE_B = "/app/bot_state_b.json"
-
-SAVED_STATE = {
-    "balance": 10151.56, "pnl_total": 151.56, "wins": 1, "losses": 0,
-    "trades": [{"close":79452.85,"divergence":False,"entry":80865.3,
-                "news_score":0,"pnl":151.56,"result":"WIN",
-                "time":"2026-05-08 02:18","type":"SHORT"}],
-    "position": None,
+function setTF(tf) {
+  currentTF = tf;
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadChart(tf);
 }
 
-DEFAULT_STATE = {
-    "mode": TRADING_MODE, "leverage": LEVERAGE, "position": None,
-    "last_signal": "Starting...", "last_signal_time": "",
-    "last_news_score": 0, "last_news_summary": "", "last_news_headlines": [],
-    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
-    "wins": 0, "losses": 0, "box": None, "current_price": 0.0,
-    "current_rsi": 50.0, "last_cycle": "", "errors": [], "last_divergence": False,
+function loadChart(interval) {
+  const container = document.getElementById('tv-chart');
+  container.innerHTML = '';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tradingview-widget-container';
+  wrapper.style.cssText = 'height:100%;width:100%;';
+
+  const widget = document.createElement('div');
+  widget.className = 'tradingview-widget-container__widget';
+  widget.style.cssText = 'height:100%;width:100%;';
+  wrapper.appendChild(widget);
+
+  const script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  script.async = true;
+  script.innerHTML = JSON.stringify({
+    "autosize": true,
+    "symbol": "BITGET:BTCUSDT.P",
+    "interval": interval,
+    "timezone": "Etc/UTC",
+    "theme": "dark",
+    "style": "1",
+    "locale": "en",
+    "backgroundColor": "#0a0e1a",
+    "gridColor": "rgba(30,45,69,0.3)",
+    "hide_top_toolbar": false,
+    "hide_legend": false,
+    "hide_side_toolbar": false,
+    "allow_symbol_change": false,
+    "save_image": false,
+    "withdateranges": true,
+    "studies": [
+      "RSI@tv-basicstudies",
+      "VWAP@tv-basicstudies"
+    ],
+    "support_host": "https://www.tradingview.com"
+  });
+  wrapper.appendChild(script);
+  container.appendChild(wrapper);
 }
 
-DEFAULT_STATE_B = {
-    "position": None, "last_signal": "Starting...", "last_signal_time": "",
-    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
-    "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
-    "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+// Load chart on page ready
+loadChart('60');
+
+// ── LIVE DATA UPDATE via fetch (no page reload) ─────────────────
+function fmt(n, dec=2) {
+  return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:dec, maximumFractionDigits:dec});
 }
 
-def load_state():
-    try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE) as f: saved = json.load(f)
-            merged = {**DEFAULT_STATE, **saved}
-            merged["running"] = True; merged["mode"] = TRADING_MODE
-            log.info(f"State A loaded: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
-            return merged
-    except Exception as e:
-        log.warning(f"Load state error: {e}")
-    merged = {**DEFAULT_STATE, **SAVED_STATE}
-    merged["running"] = True; merged["mode"] = TRADING_MODE
-    log.info(f"SAVED_STATE: ${merged['balance']:.2f}")
-    return merged
+function renderPanel(s) {
+  const wins  = s.wins   || 0;
+  const losses= s.losses || 0;
+  const total = wins + losses;
+  const wr    = total > 0 ? Math.round(wins/total*100) : 0;
+  const rsi   = s.current_rsi || 50;
+  const price = s.current_price || 0;
+  const box   = s.box;
+  const pos   = s.position;
 
-def load_state_b():
-    try:
-        if os.path.exists(STATE_FILE_B):
-            with open(STATE_FILE_B) as f: saved = json.load(f)
-            log.info(f"State B loaded: ${saved.get('balance',10000):.2f}")
-            return {**DEFAULT_STATE_B, **saved}
-    except Exception as e:
-        log.warning(f"Load state B error: {e}")
-    return dict(DEFAULT_STATE_B)
+  // ── Price ──
+  document.getElementById('price-val').textContent  = fmt(price);
+  document.getElementById('cycle-val').textContent  = s.last_cycle || '';
 
-def save_state():
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump({k:v for k,v in state.items() if k!="running"}, f, indent=2, default=str)
-    except Exception as e:
-        log.warning(f"Save state error: {e}")
+  // ── RSI badge ──
+  const rsiBadge = document.getElementById('rsi-badge');
+  rsiBadge.textContent = 'RSI ' + rsi;
+  rsiBadge.className   = 'badge ' + (rsi > 70 ? 'badge-red' : rsi < 30 ? 'badge-green' : 'badge-gray');
 
-def save_state_b():
-    try:
-        with open(STATE_FILE_B, "w") as f:
-            json.dump(state_b, f, indent=2, default=str)
-    except Exception as e:
-        log.warning(f"Save state B error: {e}")
+  // ── RSI bar ──
+  const bar = document.getElementById('rsi-bar');
+  bar.style.width      = rsi + '%';
+  bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
+  document.getElementById('rsi-num').textContent = rsi;
 
-state   = load_state()
-state["running"] = True
-state_b = load_state_b()
+  // ── Divergence ──
+  const divBadge = document.getElementById('div-badge');
+  divBadge.style.display = s.last_divergence ? 'inline-block' : 'none';
 
-# =================================================================
-# NEWS
-# =================================================================
+  // ── Stats ──
+  document.getElementById('bal-val').textContent  = fmt(s.balance, 0);
+  const pnlEl = document.getElementById('pnl-val');
+  pnlEl.textContent  = (s.pnl_total >= 0 ? '+' : '') + fmt(s.pnl_total);
+  pnlEl.className    = 'stat-value pnl-val ' + (s.pnl_total >= 0 ? 'text-green' : 'text-red');
+  document.getElementById('wr-val').textContent   = wr + '%';
+  document.getElementById('wl-val').textContent   = wins + 'W · ' + losses + 'L';
 
-NEWS_SOURCES = [
-    "https://feeds.feedburner.com/CoinDesk",
-    "https://cointelegraph.com/rss",
-    "https://cryptonews.com/news/feed/",
-    "https://www.newsbtc.com/feed/",
-]
+  // ── Signal ──
+  const sigType = document.getElementById('sig-type');
+  const sigText = document.getElementById('sig-text');
+  const sigTime = document.getElementById('sig-time');
+  sigText.textContent = s.last_signal || '';
+  sigTime.textContent = s.last_signal_time || '';
+  const sig = s.last_signal || '';
+  if (sig.includes('LONG') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
+    sigType.textContent  = '▲ LONG';
+    sigType.className    = 'signal-type signal-long';
+  } else if (sig.includes('SHORT') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
+    sigType.textContent  = '▼ SHORT';
+    sigType.className    = 'signal-type signal-short';
+  } else if (sig.includes('HOLDING')) {
+    sigType.textContent  = '◆ ' + (pos ? pos.type : 'HOLDING');
+    sigType.className    = 'signal-type signal-wait';
+  } else {
+    sigType.textContent  = '◌ WAIT';
+    sigType.className    = 'signal-type signal-wait';
+  }
 
-def fetch_news():
-    headlines = []
-    for url in NEWS_SOURCES:
-        try:
-            feed = feedparser.parse(url)
-            for e in feed.entries[:4]: headlines.append(e.title)
-        except Exception: pass
-    state["last_news_headlines"] = headlines[:20]
-    return headlines[:20]
+  // ── Box ──
+  const boxSec = document.getElementById('box-section');
+  if (box) {
+    boxSec.style.display = 'block';
+    document.getElementById('box-date').textContent = box.date || '';
+    document.getElementById('box-high').textContent = fmt(box.high);
+    document.getElementById('box-mid').textContent  = fmt(box.mid);
+    document.getElementById('box-low').textContent  = fmt(box.low);
+    document.getElementById('box-size').textContent = fmt(box.size, 0);
+  } else {
+    boxSec.style.display = 'none';
+  }
 
-def ai_news_score(headlines, signal_type, price, box):
-    if not headlines or not ANTHROPIC_API_KEY:
-        return 0, ""
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        prompt = f"""Crypto news for {signal_type} BTC/USDT @ ${price:,.0f}. MID=${box['mid']:,.0f}.
-Headlines: {chr(10).join(f'- {h}' for h in headlines[:8])}
-JSON only: {{"score":<-2 to 2>,"summary":"<15 words>"}}"""
-        r    = client.messages.create(model="claude-haiku-4-5", max_tokens=100,
-                                      messages=[{"role":"user","content":prompt}])
-        text = r.content[0].text.strip().replace("```json","").replace("```","").strip()
-        data = json.loads(text)
-        score   = max(-2, min(2, int(data.get("score", 0))))
-        summary = data.get("summary", "")
-        state["last_news_score"]   = score
-        state["last_news_summary"] = summary
-        return score, summary
-    except Exception as e:
-        log.error(f"AI news error: {e}")
-        return 0, ""
+  // ── Open Position ──
+  const posSec = document.getElementById('pos-section');
+  if (pos) {
+    posSec.style.display = 'block';
+    document.getElementById('pos-type').textContent  = pos.type;
+    document.getElementById('pos-type').className    = 'pill ' + (pos.type==='LONG' ? 'pill-long' : 'pill-short');
+    document.getElementById('pos-entry').textContent = fmt(pos.entry);
+    document.getElementById('pos-tp').textContent    = fmt(pos.tp);
+    document.getElementById('pos-sl').textContent    = fmt(pos.sl);
+    document.getElementById('pos-qty').textContent   = pos.qty;
+    document.getElementById('pos-div').innerHTML     = pos.has_divergence
+      ? '<span class="pill pill-div">🔥 DOUBLE</span>' : 'Normal';
+    document.getElementById('pos-score').textContent = pos.news_score || 0;
+    document.getElementById('pos-score').className   =
+      pos.news_score > 0 ? 'text-green' : pos.news_score < 0 ? 'text-red' : 'text-gray';
+    document.getElementById('pos-time').textContent  = pos.time || '';
+    document.getElementById('pos-news').textContent  = pos.news_summary
+      ? '📰 ' + pos.news_summary.substring(0,100) : '';
+    // Live unrealised PnL - only if price is valid
+    if (price > 0) {
+      const unreal = pos.type === 'LONG'
+        ? (price - pos.entry) * pos.qty
+        : (pos.entry - price) * pos.qty;
+      const unrealEl = document.getElementById('pos-unreal');
+      if (unrealEl) {
+        unrealEl.textContent = (unreal >= 0 ? '+' : '-') + fmt(Math.abs(unreal));
+        unrealEl.className   = 'stat-value ' + (unreal >= 0 ? 'text-green' : 'text-red');
+      }
+    }
+  } else {
+    posSec.style.display = 'none';
+  }
 
-# =================================================================
-# POSITION MANAGEMENT - Strategy A (4 phases)
-# =================================================================
+  // ── News ──
+  document.getElementById('news-score').textContent  = 'Score: ' + (s.last_news_score || 0);
+  document.getElementById('news-score').className    =
+    'news-score-badge ' + (s.last_news_score > 0 ? 'badge-green' : s.last_news_score < 0 ? 'badge-red' : 'badge-gray');
+  document.getElementById('news-summary').textContent = s.last_news_summary || '';
+  const hlDiv = document.getElementById('news-headlines');
+  if (s.last_news_headlines) {
+    hlDiv.innerHTML = s.last_news_headlines.slice(0,6).map(h =>
+      '<div class="news-hl">• ' + h + '</div>'
+    ).join('');
+  }
 
-def get_balance_a():
-    if TRADING_MODE == "PAPER": return state["balance"]
-    try:
-        r   = bitget_signed("GET", f"/api/v2/mix/account/account?symbol={BITGET_SYMBOL}&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
-        bal = float(r.get("data",{}).get("available", state["balance"]))
-        state["balance"] = bal
-        return bal
-    except Exception: return state["balance"]
+  // ── Trade History ──
+  const tradeSec = document.getElementById('trade-section');
+  const tradeBody = document.getElementById('trade-body');
+  if (s.trades && s.trades.length > 0) {
+    tradeSec.style.display = 'block';
+    const rows = [...s.trades].reverse().slice(0,15).map(t =>
+      '<tr>' +
+      '<td class="text-dim">' + (t.time||'').substring(5,16) + '</td>' +
+      '<td><span class="pill ' + (t.type==='LONG'?'pill-long':'pill-short') + '">' + t.type + '</span></td>' +
+      '<td class="' + (t.pnl>=0?'text-green':'text-red') + '">' + (t.pnl>=0?'+':'') + fmt(t.pnl,1) + '</td>' +
+      '<td><span class="pill ' + (t.result==='WIN'?'pill-win':'pill-loss') + '">' + t.result + '</span></td>' +
+      '<td>' + (t.divergence ? '<span class="text-yellow">🔥</span>' : '<span class="text-dim">—</span>') + '</td>' +
+      '</tr>'
+    ).join('');
+    tradeBody.innerHTML = rows;
+  } else {
+    tradeSec.style.display = 'none';
+  }
 
-def calc_qty(balance, risk_pct, entry, sl):
-    risk_dist = abs(entry - sl)
-    if risk_dist <= 0: return 0.001
-    return max(round((balance * risk_pct) / risk_dist, 4), 0.001)
+  // ── Errors ──
+  const errSec  = document.getElementById('err-section');
+  const errDiv  = document.getElementById('err-body');
+  if (s.errors && s.errors.length > 0) {
+    errSec.style.display = 'block';
+    errDiv.innerHTML = s.errors.slice(-3).map(e => '<div class="error-item">' + e + '</div>').join('');
+  } else {
+    errSec.style.display = 'none';
+  }
 
-def finalize_trade_a(price, result, note=""):
-    pos = state["position"]
-    if not pos: return
-    pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price)) * pos["qty"], 2)
-    state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
-    state["balance"]   = round(state["balance"]   + pnl, 2)
-    if result == "WIN": state["wins"]   += 1
-    else:               state["losses"] += 1
-    state["trades"].append({
-        "type": pos["type"], "entry": pos["entry"], "close": price,
-        "pnl": pnl, "result": result,
-        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "news_score": pos.get("news_score", 0),
-        "divergence": pos.get("has_divergence", False), "note": note,
-    })
-    wins = state["wins"]; losses = state["losses"]
-    wr   = round(wins/(wins+losses)*100) if wins+losses>0 else 0
-    emoji = "✅" if result=="WIN" else "❌"
-    send_telegram(
-        f"{emoji} <b>[A] {note or result}</b>\n"
-        f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state['balance']:,.2f}\n"
-        f"W/L: {wins}W/{losses}L | WR: {wr}%"
+  // ── Pulse flash ──
+  const dot = document.querySelector('.pulse');
+  if (dot) {
+    dot.style.background = '#f59e0b';
+    setTimeout(() => { dot.style.background = '#10b981'; }, 400);
+  }
+}
+
+function updateData() {
+  fetch('/api')
+    .then(r => r.json())
+    .then(renderPanel)
+    .catch(err => console.log('Update error:', err));
+}
+
+setInterval(updateData, 10000);
+updateData();
+
+// Smart reload: only reload full page when tab is hidden (user not watching)
+// This refreshes trade history, news etc. without interrupting the user
+let reloadTimer = null;
+
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    // Tab hidden: schedule full reload after 60s
+    reloadTimer = setTimeout(() => location.reload(), 60000);
+  } else {
+    // Tab visible again: cancel reload, just fetch fresh data
+    if (reloadTimer) clearTimeout(reloadTimer);
+    updateData();
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD B — Strategy B (15m entry | 1H box | R/R 2:1)
+# ═══════════════════════════════════════════════════════════════
+DASHBOARD_B = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMC AI Bot — Strategy B</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
+  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
+  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6; --purple: #8b5cf6;
+}
+body { background: var(--bg); color: var(--text); font-family: Inter, monospace; }
+.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
+.main-col { display: flex; flex-direction: column; }
+.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.logo { font-size: 15px; font-weight: 700; }
+.logo span { color: var(--purple); }
+.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
+.badge-b { background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); }
+.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge-gray { background: rgba(71,85,105,0.3); color: var(--text2); border: 1px solid var(--border); }
+.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--purple); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); transition: all 0.15s; }
+.tf-btn.active { background: var(--purple); color: white; border-color: var(--purple); }
+.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
+.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
+.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
+.price-main { font-size: 28px; font-weight: 700; color: var(--green); }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.stat-value { font-size: 16px; font-weight: 600; }
+.signal-card { border-radius: 10px; padding: 14px; border: 1px solid var(--border); background: var(--bg3); }
+.signal-type { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 5px 14px; border-radius: 8px; margin-bottom: 10px; }
+.signal-long  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+.signal-short { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+.signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2);  border: 1px solid var(--border); }
+.box-levels { display: flex; flex-direction: column; gap: 6px; }
+.level-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 8px; }
+.level-pdh { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
+.level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+.level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+.level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; }
+.level-price { font-size: 14px; font-weight: 700; }
+.pos-card { background: var(--bg3); border-radius: 10px; padding: 14px; border: 1px solid rgba(139,92,246,0.3); }
+.pos-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.pos-row:last-child { border-bottom: none; }
+.trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
+.pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 600; }
+.pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
+.pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
+.nav-link { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 11px; background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); text-decoration: none; }
+.nav-link.active-a { background: rgba(59,130,246,0.15); color: var(--blue); border-color: rgba(59,130,246,0.3); }
+.bottombar { padding: 10px 20px; background: var(--bg2); border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 10px; color: var(--text3); }
+.text-green { color: var(--green); } .text-red { color: var(--red); } .text-yellow { color: var(--yellow); } .text-gray { color: var(--text2); } .text-dim { color: var(--text3); } .text-purple { color: var(--purple); }
+.rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.rsi-bar-fill { height: 100%; border-radius: 3px; }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .side-col { border-left: none; border-top: 1px solid var(--border); }
+  .chart-wrap { height: 55vw; min-height: 280px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main-col">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="logo">SMC <span>AI</span> Bot</div>
+        <span class="badge badge-b">STRATEGY B</span>
+        <span class="badge badge-paper">PAPER</span>
+        <span class="badge badge-gray">15m · 1H BOX</span>
+        <span class="badge badge-gray">R/R 2:1</span>
+        {% if position %}<span class="badge" style="background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);">{{ position.type }} OPEN</span>{% endif %}
+      </div>
+      <div class="topbar-right">
+        <a href="/" class="nav-link active-a">Strategy A</a>
+        <a href="/b" class="nav-link">Strategy B</a>
+        <div class="pulse"></div>
+        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
+      </div>
+    </div>
+    <div class="chart-toolbar">
+      <button class="tf-btn" onclick="setTF('1')">1m</button>
+      <button class="tf-btn active" onclick="setTF('15')" id="tf-15">15m</button>
+      <button class="tf-btn" onclick="setTF('60')">1H</button>
+      <button class="tf-btn" onclick="setTF('240')">4H</button>
+      <span style="font-size:11px;color:#475569;margin-left:auto;">powered by TradingView</span>
+    </div>
+    <div class="chart-wrap"><div id="tv-chart"></div></div>
+    <div class="bottombar">
+      <span>⚠ PAPER TRADING · STRATEGY B · 15m ENTRY · 1H BOX · R/R 2:1</span>
+      <span>Auto-refresh 10s</span>
+    </div>
+  </div>
+
+  <div class="side-col">
+    <div class="price-display">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">BTCUSDT · 15m</div>
+      <div class="price-main" id="price-val">${{ "{:,.2f}".format(current_price) }}</div>
+      <div style="margin-top:6px;">
+        <span class="badge {{ 'badge-paper' if rsi < 30 else 'badge-gray' }}" id="rsi-badge" style="{{ 'background:rgba(239,68,68,0.15);color:#ef4444;border-color:#ef4444' if rsi > 70 else '' }}">RSI {{ rsi }}</span>
+        {% if divergence %}<span class="badge badge-b" style="margin-left:4px;" id="div-badge">📊 Div!</span>{% else %}<span id="div-badge" style="display:none;"></span>{% endif %}
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-title">Performance</div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value text-green" id="bal-val">${{ "{:,.0f}".format(balance) }}</div></div>
+        <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}" id="pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div></div>
+        <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value text-yellow" id="wr-val">{{ win_rate }}%</div></div>
+        <div class="stat-card"><div class="stat-label">W / L</div><div class="stat-value text-gray" id="wl-val">{{ wins }}W · {{ losses }}L</div></div>
+      </div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);">
+          <span>RSI 15m</span><span id="rsi-num">{{ rsi }}</span>
+        </div>
+        <div class="rsi-bar-bg">
+          <div class="rsi-bar-fill" id="rsi-bar" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-title">Current Signal</div>
+      <div class="signal-card">
+        <div id="sig-type" class="signal-type signal-wait">◌ WAIT</div>
+        <div id="sig-text" style="font-size:11px;color:var(--text2);">{{ signal }}</div>
+        <div id="sig-time" style="font-size:10px;color:var(--text3);margin-top:4px;">{{ signal_time }}</div>
+      </div>
+    </div>
+
+    {% if box %}
+    <div class="side-section">
+      <div class="side-title">1H Box · {{ box.time }}</div>
+      <div class="box-levels">
+        <div class="level-row level-pdh">
+          <div><div class="level-name text-red">HIGH · Short Zone</div><div style="font-size:9px;opacity:0.6;">RSI > 70 → Sell</div></div>
+          <div class="level-price text-red" id="box-high">${{ "{:,.2f}".format(box.high) }}</div>
+        </div>
+        <div class="level-row level-mid">
+          <div><div class="level-name text-yellow">MID · Take Profit</div><div style="font-size:9px;opacity:0.6;">R/R 2:1</div></div>
+          <div class="level-price text-yellow" id="box-mid">${{ "{:,.2f}".format(box.mid) }}</div>
+        </div>
+        <div class="level-row level-pdl">
+          <div><div class="level-name text-green">LOW · Long Zone</div><div style="font-size:9px;opacity:0.6;">RSI < 30 → Buy</div></div>
+          <div class="level-price text-green" id="box-low">${{ "{:,.2f}".format(box.low) }}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;">Box size: ${{ "{:,.0f}".format(box.size) }} · SL = TP/2 · R/R 2:1</div>
+    </div>
+    {% endif %}
+
+    {% if position %}
+    <div class="side-section">
+      <div class="side-title">Open Position</div>
+      <div class="pos-card">
+        <div class="pos-row"><span style="color:var(--text2);">Type</span><span class="pill {{ 'pill-long' if position.type=='LONG' else 'pill-short' }}" id="pos-type">{{ position.type }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Entry</span><span id="pos-entry">${{ "{:,.2f}".format(position.entry) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Unrealised</span><span id="pos-unreal" class="text-gray">—</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Take Profit</span><span class="text-green" id="pos-tp">${{ "{:,.2f}".format(position.tp) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Stop Loss</span><span class="text-red" id="pos-sl">${{ "{:,.2f}".format(position.sl) }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">R/R</span><span class="text-purple">2:1</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Qty</span><span id="pos-qty">{{ position.qty }}</span></div>
+        <div class="pos-row"><span style="color:var(--text2);">Opened</span><span class="text-dim" id="pos-time">{{ position.time }}</span></div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if trades %}
+    <div class="side-section">
+      <div class="side-title">Trade History</div>
+      <table class="trade-table">
+        <thead><tr><th>Time</th><th>Type</th><th>P&L</th><th>Result</th><th>Div</th></tr></thead>
+        <tbody id="trade-body">
+          {% for t in trades[-15:]|reverse %}
+          <tr>
+            <td class="text-dim">{{ t.time[5:16] }}</td>
+            <td><span class="pill {{ 'pill-long' if t.type=='LONG' else 'pill-short' }}">{{ t.type }}</span></td>
+            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">{{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}</td>
+            <td><span class="pill {{ 'pill-win' if t.result=='WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
+            <td>{% if t.get('divergence') %}<span style="color:#f59e0b;">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+let currentTF = '15';
+function setTF(tf) {
+  currentTF = tf;
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadChart(tf);
+}
+function loadChart(interval) {
+  const container = document.getElementById('tv-chart');
+  container.innerHTML = '';
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tradingview-widget-container';
+  wrapper.style.cssText = 'height:100%;width:100%;';
+  const widget = document.createElement('div');
+  widget.className = 'tradingview-widget-container__widget';
+  widget.style.cssText = 'height:100%;width:100%;';
+  wrapper.appendChild(widget);
+  const script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+  script.async = true;
+  script.innerHTML = JSON.stringify({
+    "autosize": true, "symbol": "BITGET:BTCUSDT.P",
+    "interval": interval, "timezone": "Etc/UTC",
+    "theme": "dark", "style": "1", "locale": "en",
+    "backgroundColor": "#0a0e1a", "gridColor": "rgba(30,45,69,0.3)",
+    "studies": ["RSI@tv-basicstudies"],
+    "support_host": "https://www.tradingview.com"
+  });
+  wrapper.appendChild(script);
+  container.appendChild(wrapper);
+}
+loadChart('15');
+
+function updateData() {
+  fetch('/api/b')
+    .then(r => r.json())
+    .then(s => {
+      const price = s.current_price || 0;
+      document.getElementById('price-val').textContent = '$' + price.toLocaleString('en-US', {minimumFractionDigits:2});
+      document.getElementById('cycle-time') && (document.querySelector('.cycle-time').textContent = s.last_cycle || '');
+      const rsi = s.current_rsi || 50;
+      document.getElementById('rsi-num').textContent = rsi;
+      const bar = document.getElementById('rsi-bar');
+      bar.style.width = rsi + '%';
+      bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
+      document.getElementById('bal-val').textContent = '$' + (s.balance||0).toLocaleString('en-US',{minimumFractionDigits:0});
+      const pnl = s.pnl_total || 0;
+      const pnlEl = document.getElementById('pnl-val');
+      pnlEl.textContent = (pnl>=0?'+':'') + '$' + Math.abs(pnl).toFixed(2);
+      pnlEl.className = 'stat-value ' + (pnl>=0?'text-green':'text-red');
+      const w = s.wins||0, l = s.losses||0;
+      document.getElementById('wl-val').textContent = w + 'W · ' + l + 'L';
+      document.getElementById('wr-val').textContent = (w+l>0?Math.round(w/(w+l)*100):0) + '%';
+      const sig = s.last_signal || '';
+      const sigType = document.getElementById('sig-type');
+      document.getElementById('sig-text').textContent = sig;
+      if (sig.includes('LONG') && !sig.includes('HOLDING')) { sigType.textContent = '▲ LONG'; sigType.className = 'signal-type signal-long'; }
+      else if (sig.includes('SHORT') && !sig.includes('HOLDING')) { sigType.textContent = '▼ SHORT'; sigType.className = 'signal-type signal-short'; }
+      else { sigType.textContent = '◌ WAIT'; sigType.className = 'signal-type signal-wait'; }
+      if (s.position) {
+        const pos = s.position;
+        if (price > 0) {
+          const unreal = pos.type === 'LONG' ? (price - pos.entry) * pos.qty : (pos.entry - price) * pos.qty;
+          const unrealEl = document.getElementById('pos-unreal');
+          if (unrealEl) { unrealEl.textContent = (unreal>=0?'+':'') + '$' + Math.abs(unreal).toFixed(2); unrealEl.className = unreal>=0?'text-green':'text-red'; }
+        }
+      }
+    }).catch(e => console.log(e));
+}
+setInterval(updateData, 10000);
+updateData();
+
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) updateData();
+});
+</script>
+</body>
+</html>
+"""
+
+
+@app.route("/")
+def index():
+    s      = state
+    wins   = s["wins"]
+    losses = s["losses"]
+    total  = wins + losses
+    return render_template_string(
+        DASHBOARD,
+        mode          = s["mode"],
+        balance       = s["balance"],
+        pnl           = s["pnl_total"],
+        wins          = wins,
+        losses        = losses,
+        win_rate      = round(wins / total * 100) if total > 0 else 0,
+        rsi           = s["current_rsi"],
+        divergence    = s.get("last_divergence", False),
+        signal        = s["last_signal"],
+        signal_time   = s["last_signal_time"],
+        last_cycle    = s["last_cycle"],
+        position      = s["position"],
+        box           = s["box"],
+        current_price = s["current_price"],
+        news_score    = s["last_news_score"],
+        news_summary  = s["last_news_summary"],
+        headlines     = s["last_news_headlines"],
+        trades        = s["trades"],
+        errors        = s["errors"],
     )
-    if TRADING_MODE == "LIVE": close_position_live(pos["type"], pos["qty"])
-    state["position"] = None
-    save_state()
 
-def check_position_a(price):
-    pos = state["position"]
-    if not pos: return
 
-    if os.environ.get("FORCE_CLOSE","").lower() == "true":
-        finalize_trade_a(price, "WIN" if price>pos["entry"] else "LOSS", "FORCE CLOSE")
-        return
+@app.route("/api")
+def api():
+    return jsonify(state)
 
-    entry   = pos["entry"]
-    tp      = pos["tp"]
-    is_long = pos["type"] == "LONG"
-    tp_dist = abs(tp - entry)
-    if tp_dist == 0: return
+@app.route("/api/b")
+def api_b():
+    return jsonify(state_b)
 
-    progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
-
-    # Phase 1: 50% - Break Even
-    if not pos.get("phase1_done") and progress >= 0.50:
-        pos["sl"] = entry; pos["phase1_done"] = True
-        log.info(f"[A] Phase 1: SL -> entry @ {entry:.2f}")
-        send_telegram(f"🔒 <b>[A] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
-        save_state()
-
-    # Phase 2: 70% - Partial 30% close
-    if not pos.get("phase2_done") and progress >= 0.70:
-        pqty = round(pos["qty"]*0.30, 4)
-        ppnl = round(((price-entry) if is_long else (entry-price))*pqty, 2)
-        pos["qty"] = round(pos["qty"]-pqty, 4); pos["phase2_done"] = True
-        state["pnl_total"] = round(state["pnl_total"]+ppnl, 2)
-        state["balance"]   = round(state["balance"]  +ppnl, 2)
-        log.info(f"[A] Phase 2: Partial 30% @ {price:.2f} PnL={ppnl:+.2f}")
-        send_telegram(f"💰 <b>[A] PARTIAL 30%</b>\n+${ppnl:.2f} | Rem: {pos['qty']:.4f} BTC")
-        if TRADING_MODE == "LIVE": close_position_live(pos["type"], pqty)
-        save_state()
-
-    # Phase 3+4: Past TP - Trailing stop
-    past_tp = (is_long and price>=tp) or (not is_long and price<=tp)
-    if past_tp:
-        if not pos.get("trailing_active"):
-            pos["trailing_active"] = True
-            pos["trailing_high"]   = price
-            log.info(f"[A] Phase 3: Trailing activated @ {price:.2f}")
-            send_telegram(f"🚀 <b>[A] TRAILING ACTIVE</b>\nPassed TP ${tp:,.2f}")
-            save_state()
-
-        # Update trailing high
-        if is_long: pos["trailing_high"] = max(pos.get("trailing_high",price), price)
-        else:       pos["trailing_high"] = min(pos.get("trailing_high",price), price)
-
-        th = pos["trailing_high"]
-        ts = th*0.99 if is_long else th*1.01
-        if (is_long and price<=ts) or (not is_long and price>=ts):
-            log.info(f"[A] Phase 4: Trailing hit @ {price:.2f} (high={th:.2f})")
-            finalize_trade_a(price, "WIN", f"TRAILING (high=${th:,.2f})")
-        return
-
-    # Normal SL
-    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
-    if hit_sl:
-        result = "WIN" if pos["sl"]>=entry else "LOSS"
-        finalize_trade_a(pos["sl"], result, "STOP LOSS")
-
-# =================================================================
-# POSITION MANAGEMENT - Strategy B (2 phases)
-# =================================================================
-
-def finalize_trade_b(price, result, note=""):
-    pos = state_b["position"]
-    if not pos: return
-    pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
-    state_b["pnl_total"] = round(state_b["pnl_total"]+pnl, 2)
-    state_b["balance"]   = round(state_b["balance"]  +pnl, 2)
-    if result=="WIN": state_b["wins"]   += 1
-    else:             state_b["losses"] += 1
-    state_b["trades"].append({
-        "type": pos["type"], "entry": pos["entry"], "close": price,
-        "pnl": pnl, "result": result,
-        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "divergence": pos.get("has_divergence", False), "note": note,
-    })
-    wins=state_b["wins"]; losses=state_b["losses"]
-    emoji = "✅" if result=="WIN" else "❌"
-    send_telegram(
-        f"{emoji} <b>[B] {note or result}</b>\n"
-        f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state_b['balance']:,.2f}\n"
-        f"W/L: {wins}W/{losses}L"
-    )
-    state_b["position"] = None
-    save_state_b()
-
-def check_position_b(price):
-    pos = state_b["position"]
-    if not pos: return
-
-    if os.environ.get("FORCE_CLOSE_B","").lower() == "true":
-        finalize_trade_b(price, "WIN" if price>pos["entry"] else "LOSS", "FORCE CLOSE")
-        return
-
-    entry   = pos["entry"]
-    tp      = pos["tp"]
-    is_long = pos["type"] == "LONG"
-    tp_dist = abs(tp-entry)
-
-    # Phase 1: 50% - Break Even
-    if tp_dist>0 and not pos.get("phase1_done"):
-        progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
-        if progress >= 0.50:
-            pos["sl"] = entry; pos["phase1_done"] = True
-            log.info(f"[B] Phase 1: SL -> entry @ {entry:.2f}")
-            send_telegram(f"🔒 <b>[B] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
-            save_state_b()
-
-    hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
-    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
-
-    if hit_tp: finalize_trade_b(tp,         "WIN",  "TAKE PROFIT")
-    elif hit_sl:
-        result = "WIN" if pos["sl"]>=entry else "LOSS"
-        finalize_trade_b(pos["sl"], result, "STOP LOSS")
-
-# =================================================================
-# STRATEGY A - Daily box + 1H RSI
-# =================================================================
-
-def run_strategy_a():
-    price = rt.price
-    rsi   = rt.rsi_1h
-
-    state["current_price"] = price
-    state["current_rsi"]   = rsi
-
-    if price<=0 or not rt.initialized:
-        state["last_signal"] = "Initializing..."
-        return
-
-    if state["position"]:
-        check_position_a(price)
-        if state["position"]:
-            pos = state["position"]
-            pnl = ((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"]
-            state["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}"
-            return
-
-    candles_4h = get_candles("4H", 500)
-    candles_1h = get_candles("1H", 200)
-    if not candles_4h or not candles_1h:
-        state["last_signal"] = "No candle data"
-        return
-
-    box = build_daily_box(candles_4h)
-    if not box:
-        state["last_signal"] = "No box"
-        return
-    state["box"] = box
-
-    highs_1h = [c["high"] for c in candles_1h]
-    lows_1h  = [c["low"]  for c in candles_1h]
-    with rt.lock:
-        closes_1h = list(rt.closes_1h)
-    bull_div, bear_div = detect_divergence(closes_1h, highs_1h[-20:], lows_1h[-20:])
-    state["last_divergence"] = bull_div or bear_div
-
-    support, resistance = find_4h_sr(candles_4h, price)
-    balance = get_balance_a()
-
-    log.info(f"[A] Price={price:.2f} RSI={rsi} Box=[{box['low']:.0f}-{box['high']:.0f}] MID={box['mid']:.0f} div={bull_div}/{bear_div}")
-
-    # SHORT at PDH
-    at_pdh = (price >= box["high"]*0.995) and (price <= box["high"]*1.015)
-    if at_pdh and rsi>70 and box["mid"]<price:
-        sl = round(resistance*1.003, 2)
-        tp = box["mid"]
-        if tp>=price: tp=round(price*0.99, 2)
-        if sl<=price: sl=round(price*1.01, 2)
-        if sl>price*1.015: sl=round(price*1.015, 2)
-        risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        log.info(f"[A] SHORT: entry={price:.2f} tp={tp:.2f} sl={sl:.2f}")
-        headlines      = fetch_news()
-        score, summary = ai_news_score(headlines, "SHORT", price, box)
-        send_telegram(f"📰 <b>[A] News SHORT</b>\nScore:{score} | {summary}")
-        order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
-        if order_id:
-            state["position"] = {"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                  "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bear_div}
-            state["last_signal"]="SHORT"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state()
-            send_telegram(f"🔴 <b>[A] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bear_div else 'Normal'}")
-        return
-
-    # LONG at PDL
-    at_pdl = (price <= box["low"]*1.005) and (price >= box["low"]*0.985)
-    if at_pdl and rsi<30 and box["mid"]>price:
-        sl = round(support*0.997, 2)
-        tp = box["mid"]
-        if tp<=price: tp=round(price*1.01, 2)
-        if sl>=price: sl=round(price*0.99, 2)
-        if sl<price*0.985: sl=round(price*0.985, 2)
-        risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        log.info(f"[A] LONG: entry={price:.2f} tp={tp:.2f} sl={sl:.2f}")
-        headlines      = fetch_news()
-        score, summary = ai_news_score(headlines, "LONG", price, box)
-        send_telegram(f"📰 <b>[A] News LONG</b>\nScore:{score} | {summary}")
-        order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
-        if order_id:
-            state["position"] = {"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                  "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bull_div}
-            state["last_signal"]="LONG"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state()
-            send_telegram(f"🟢 <b>[A] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bull_div else 'Normal'}")
-        return
-
-    div_txt = "Div!" if (bull_div or bear_div) else "No div"
-    state["last_signal"] = f"WAIT | RSI={rsi} | [{box['low']:.0f}-{box['high']:.0f}] | {div_txt}"
-    log.info(f"[A] {state['last_signal']}")
-
-# =================================================================
-# STRATEGY B - 1H box + 15m RSI
-# =================================================================
-
-def run_strategy_b():
-    price   = rt.price
-    rsi_15m = rt.rsi_15m
-
-    state_b["current_rsi"]   = rsi_15m
-    state_b["current_price"] = price  # needed for dashboard unrealised PnL
-
-    if price<=0 or not rt.initialized:
-        state_b["last_signal"] = "Initializing..."
-        return
-
-    if state_b["position"]:
-        check_position_b(price)
-        if state_b["position"]:
-            pos = state_b["position"]
-            pnl = ((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"]
-            state_b["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}"
-            return
-
-    candles_1h = get_candles("1H", 50)
-    if not candles_1h:
-        state_b["last_signal"] = "No candle data"
-        return
-
-    box = build_1h_box(candles_1h)
-    if not box: return
-    state_b["box"] = box
-
-    candles_15m = get_candles("15m", 100)
-    if candles_15m:
-        h15 = [c["high"] for c in candles_15m]
-        l15 = [c["low"]  for c in candles_15m]
-        with rt.lock: c15 = list(rt.closes_15m)
-        bull_div, bear_div = detect_divergence(c15, h15[-20:], l15[-20:])
-    else:
-        bull_div = bear_div = False
-    state_b["last_divergence"] = bull_div or bear_div
-
-    balance = state_b["balance"]
-    log.info(f"[B] Price={price:.2f} RSI15m={rsi_15m} 1H=[{box['low']:.0f}-{box['high']:.0f}]")
-
-    # SHORT at 1H High
-    at_high = (price>=box["high"]*0.995) and (price<=box["high"]*1.015)
-    if at_high and rsi_15m>70 and box["mid"]<price:
-        tp_dist = price - box["mid"]
-        sl_dist = tp_dist/2
-        tp=box["mid"]; sl=round(price+sl_dist, 2)
-        risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
-        if order_id:
-            state_b["position"]={"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bear_div}
-            state_b["last_signal"]="SHORT"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state_b()
-            send_telegram(f"🔴 <b>[B] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bear_div else ''}")
-        return
-
-    # LONG at 1H Low
-    at_low = (price<=box["low"]*1.005) and (price>=box["low"]*0.985)
-    if at_low and rsi_15m<30 and box["mid"]>price:
-        tp_dist = box["mid"] - price
-        sl_dist = tp_dist/2
-        tp=box["mid"]; sl=round(price-sl_dist, 2)
-        risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
-        if order_id:
-            state_b["position"]={"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bull_div}
-            state_b["last_signal"]="LONG"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state_b()
-            send_telegram(f"🟢 <b>[B] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bull_div else ''}")
-        return
-
-    div_txt = "Div!" if (bull_div or bear_div) else "No div"
-    state_b["last_signal"] = f"WAIT | RSI={rsi_15m} | [{box['low']:.0f}-{box['high']:.0f}] | {div_txt}"
-    log.info(f"[B] {state_b['last_signal']}")
-
-# =================================================================
-# BOT LOOP
-# =================================================================
-
-def bot_loop():
-    log.info("=" * 45)
-    log.info("  SMC AI BOT v3 - Real-time WebSocket RSI")
-    log.info(f"  Mode: {TRADING_MODE} | Leverage: {LEVERAGE}x")
-    log.info(f"  Balance A: ${state['balance']:.2f} W{state['wins']}/L{state['losses']}")
-    log.info(f"  Balance B: ${state_b['balance']:.2f}")
-    log.info("=" * 45)
-
-    rt.load_history()
-    rt.start_websocket()
-    rt.start_polling()
-    time.sleep(5)
-
-    send_telegram(
-        f"⚡ <b>SMC AI Bot v3 Started</b>\n"
-        f"Mode: {TRADING_MODE}\n"
-        f"Balance A: ${state['balance']:.2f} | W{state['wins']}/L{state['losses']}\n"
-        f"Balance B: ${state_b['balance']:.2f}\n"
-        f"RSI: Real-time WebSocket\n"
-        f"Strategy A: 60s | Strategy B: 30s"
+@app.route("/b")
+def strategy_b():
+    s    = state_b
+    wins = s.get("wins", 0)
+    losses = s.get("losses", 0)
+    total  = wins + losses
+    return render_template_string(
+        DASHBOARD_B,
+        balance       = s.get("balance", 10000),
+        pnl           = s.get("pnl_total", 0),
+        wins          = wins,
+        losses        = losses,
+        win_rate      = round(wins/total*100) if total > 0 else 0,
+        rsi           = s.get("current_rsi", 50),
+        divergence    = s.get("last_divergence", False),
+        signal        = s.get("last_signal", "Starting..."),
+        signal_time   = s.get("last_signal_time", ""),
+        last_cycle    = s.get("last_cycle", ""),
+        position      = s.get("position"),
+        box           = s.get("box"),
+        current_price = state.get("current_price", 0),
+        trades        = s.get("trades", []),
+        errors        = s.get("errors", []),
     )
 
-    last_run_a = 0
 
-    while state["running"]:
-        try:
-            now    = datetime.now(timezone.utc)
-            now_ts = now.timestamp()
-            now_str = now.strftime("%Y-%m-%d %H:%M UTC")
-            cycle_a = int(os.environ.get("CYCLE_SECONDS", "60"))
-
-            # Strategy A every 60s
-            if now_ts - last_run_a >= cycle_a:
-                state["last_cycle"] = now_str
-                try:
-                    run_strategy_a()
-                except Exception as e:
-                    log.error(f"Strategy A error: {e}")
-                    state["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                    state["errors"] = state["errors"][-10:]
-                save_state()
-                last_run_a = now_ts
-
-            # Strategy B every 30s
-            state_b["last_cycle"] = now_str
-            try:
-                run_strategy_b()
-            except Exception as e:
-                log.error(f"Strategy B error: {e}")
-                state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                state_b["errors"] = state_b["errors"][-10:]
-            save_state_b()
-
-        except Exception as e:
-            log.error(f"Main loop error: {e}")
-
-        time.sleep(30)
-
-
-bot_thread = threading.Thread(target=bot_loop, daemon=True)
+if __name__ == "__main__":
+    print(f"\n🚀 SMC AI Bot starting on port {PORT}")
+    print(f"   Dashboard: http://localhost:{PORT}\n")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
