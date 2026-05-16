@@ -238,20 +238,20 @@ class RealtimeData:
                     confirm = str(item[7]) if len(item) >= 8 else "0"
                     close_price = float(item[4])
                     if confirm == "1":
-                        # Candle confirmed closed - add to history
+                        # Candle confirmed closed - add to history only
+                        # Do NOT update self.price - live price comes from ticker
                         if "1H"  in chan:
                             with self.lock: self.closes_1h.append(close_price)
                             log.info(f"1H candle CLOSED: {close_price:.2f}")
+                            self._update_rsi()
+                            log.info(f"RSI after 1H close: 1H={self.rsi_1h}")
                         elif "15m" in chan:
                             with self.lock: self.closes_15m.append(close_price)
                             log.info(f"15m candle CLOSED: {close_price:.2f}")
+                            self._update_rsi()
+                            log.info(f"RSI after 15m close: 15m={self.rsi_15m}")
                         elif "4H"  in chan:
                             with self.lock: self.closes_4h.append(close_price)
-                        # Update live price to candle close
-                        self.price = close_price
-                    # Always recalculate RSI with current live price
-                    self._update_rsi()
-                    log.info(f"RSI: 1H={self.rsi_1h} 15m={self.rsi_15m} (confirmed={confirm})")
         except Exception as e:
             log.warning(f"WS parse error: {e}")
 
