@@ -165,13 +165,15 @@ class RealtimeData:
         with self.lock:
             c1h  = list(self.closes_1h)
             c15m = list(self.closes_15m)
-        # Include live price as the current (unfinished) candle close
-        # This makes RSI match TradingView real-time value
-        if self.price > 0:
-            c1h_live  = c1h  + [self.price]
-            c15m_live = c15m + [self.price]
+        # Replace last close with live price (not append!)
+        # This simulates the current open candle like TradingView does
+        if self.price > 0 and c1h:
+            c1h_live  = c1h[:-1]  + [self.price]  # replace last, not append
         else:
             c1h_live  = c1h
+        if self.price > 0 and c15m:
+            c15m_live = c15m[:-1] + [self.price]  # replace last, not append
+        else:
             c15m_live = c15m
         self.rsi_1h  = self._calc_rsi(c1h_live)
         self.rsi_15m = self._calc_rsi(c15m_live)
@@ -375,7 +377,7 @@ DEFAULT_STATE_B = {
     "position": None, "last_signal": "Starting...", "last_signal_time": "",
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
-    "last_cycle": "", "errors": [], "last_divergence": False,
+    "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
 }
 
 def load_state():
@@ -737,7 +739,8 @@ def run_strategy_b():
     price   = rt.price
     rsi_15m = rt.rsi_15m
 
-    state_b["current_rsi"] = rsi_15m
+    state_b["current_rsi"]   = rsi_15m
+    state_b["current_price"] = price  # needed for dashboard unrealised PnL
 
     if price<=0 or not rt.initialized:
         state_b["last_signal"] = "Initializing..."
