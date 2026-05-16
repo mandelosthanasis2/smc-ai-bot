@@ -679,13 +679,17 @@ function renderPanel(s) {
     document.getElementById('pos-time').textContent  = pos.time || '';
     document.getElementById('pos-news').textContent  = pos.news_summary
       ? '📰 ' + pos.news_summary.substring(0,100) : '';
-    // Live unrealised PnL
-    const unreal = pos.type === 'LONG'
-      ? (price - pos.entry) * pos.qty
-      : (pos.entry - price) * pos.qty;
-    const unrealEl = document.getElementById('pos-unreal');
-    unrealEl.textContent = (unreal >= 0 ? '+' : '') + fmt(unreal);
-    unrealEl.className   = 'stat-value ' + (unreal >= 0 ? 'text-green' : 'text-red');
+    // Live unrealised PnL - only if price is valid
+    if (price > 0) {
+      const unreal = pos.type === 'LONG'
+        ? (price - pos.entry) * pos.qty
+        : (pos.entry - price) * pos.qty;
+      const unrealEl = document.getElementById('pos-unreal');
+      if (unrealEl) {
+        unrealEl.textContent = (unreal >= 0 ? '+' : '-') + fmt(Math.abs(unreal));
+        unrealEl.className   = 'stat-value ' + (unreal >= 0 ? 'text-green' : 'text-red');
+      }
+    }
   } else {
     posSec.style.display = 'none';
   }
@@ -1042,9 +1046,11 @@ function updateData() {
       else { sigType.textContent = '◌ WAIT'; sigType.className = 'signal-type signal-wait'; }
       if (s.position) {
         const pos = s.position;
-        const unreal = pos.type === 'LONG' ? (price - pos.entry) * pos.qty : (pos.entry - price) * pos.qty;
-        const unrealEl = document.getElementById('pos-unreal');
-        if (unrealEl) { unrealEl.textContent = (unreal>=0?'+':'') + '$' + unreal.toFixed(2); unrealEl.className = unreal>=0?'text-green':'text-red'; }
+        if (price > 0) {
+          const unreal = pos.type === 'LONG' ? (price - pos.entry) * pos.qty : (pos.entry - price) * pos.qty;
+          const unrealEl = document.getElementById('pos-unreal');
+          if (unrealEl) { unrealEl.textContent = (unreal>=0?'+':'') + '$' + Math.abs(unreal).toFixed(2); unrealEl.className = unreal>=0?'text-green':'text-red'; }
+        }
       }
     }).catch(e => console.log(e));
 }
