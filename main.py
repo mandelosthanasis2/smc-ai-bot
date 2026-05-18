@@ -278,10 +278,13 @@ DASHBOARD = """
         {% endif %}
       </div>
       <div class="topbar-right">
+        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.25);color:#60a5fa;border:1px solid rgba(59,130,246,0.5);text-decoration:none;font-weight:600;">A</a>
+        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
+        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
+        <div class="divider"></div>
         <div class="pulse"></div>
         <span>LIVE</span>
-        <div class="divider"></div>
-        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
+        <span class="cycle-time" style="margin-left:4px;">{{ last_cycle }}</span>
       </div>
     </div>
 
@@ -867,10 +870,11 @@ body { background: var(--bg); color: var(--text); font-family: Inter, monospace;
         {% if position %}<span class="badge" style="background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);">{{ position.type }} OPEN</span>{% endif %}
       </div>
       <div class="topbar-right">
-        <a href="/" class="nav-link active-a">Strategy A</a>
-        <a href="/b" class="nav-link">Strategy B</a>
+        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
+        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.25);color:#a855f7;border:1px solid rgba(139,92,246,0.5);text-decoration:none;font-weight:600;">B</a>
+        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
         <div class="pulse"></div>
-        <a href="/b" style="font-size:11px;padding:3px 10px;border-radius:5px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;margin-right:8px;">Strategy B →</a><span class="cycle-time">{{ last_cycle }}</span>
+        <span class="cycle-time">{{ last_cycle }}</span>
       </div>
     </div>
     <div class="chart-toolbar">
@@ -1167,9 +1171,9 @@ body { background: var(--bg); color: var(--text); font-family: Inter, sans-serif
         {% if position %}<span class="badge {{ 'badge-green' if position.type=='LONG' else 'badge-red' }}">{{ position.type }} OPEN</span>{% endif %}
       </div>
       <div class="topbar-right">
-        <a href="/" class="nav-link nav-a">Strategy A</a>
-        <a href="/b" class="nav-link nav-b">Strategy B</a>
-        <a href="/c" class="nav-link nav-c">Strategy C</a>
+        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
+        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
+        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.25);color:#f97316;border:1px solid rgba(249,115,22,0.5);text-decoration:none;font-weight:600;">C</a>
         <div class="pulse"></div>
         <span id="cycle-time">{{ last_cycle }}</span>
       </div>
