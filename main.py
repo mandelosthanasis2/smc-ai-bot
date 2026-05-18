@@ -1104,6 +1104,10 @@ def api():
 def api_b():
     return jsonify(state_b)
 
+@app.route("/api/c")
+def api_c():
+    return jsonify(state_c)
+
 @app.route("/b")
 def strategy_b():
     s    = state_b
@@ -1129,11 +1133,6 @@ def strategy_b():
         errors        = s.get("errors", []),
     )
 
-
-if __name__ == "__main__":
-    print(f"\n🚀 SMC AI Bot starting on port {PORT}")
-    print(f"   Dashboard: http://localhost:{PORT}\n")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
 
 # =================================================================
 # WEBHOOK ENDPOINTS — TradingView Alerts
@@ -1313,3 +1312,8 @@ def webhook_c():
         return {"ok": True, "received": signal, "strategy": "C"}
     except Exception as e:
         return {"error": str(e)}, 500
+
+if __name__ == "__main__":
+    print(f"\n🚀 SMC AI Bot starting on port {PORT}")
+    print(f"   Dashboard: http://localhost:{PORT}\n")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
