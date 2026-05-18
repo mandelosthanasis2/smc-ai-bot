@@ -1134,3 +1134,178 @@ if __name__ == "__main__":
     print(f"\n🚀 SMC AI Bot starting on port {PORT}")
     print(f"   Dashboard: http://localhost:{PORT}\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
+# =================================================================
+# WEBHOOK ENDPOINTS — TradingView Alerts
+# =================================================================
+
+from flask import request
+import threading
+
+def execute_webhook_trade(signal_type, strategy, price_override=None):
+    """Execute trade from TradingView webhook signal."""
+    from bot import rt, state, state_b, run_strategy_a, build_daily_box, build_1h_box
+    from bot import get_candles, calc_qty, place_order_paper, place_order_live
+    from bot import find_4h_sr, detect_divergence, fetch_news, ai_news_score
+    from bot import save_state, save_state_b, send_telegram
+    from bot import TRADING_MODE, RISK_PER_TRADE
+    from config import LEVERAGE
+    import os
+    from datetime import datetime, timezone
+    from collections import deque
+
+    price = price_override or rt.price
+    if price <= 0:
+        return {"error": "No price available"}, 400
+
+    if strategy == "A":
+        # Strategy A webhook trade
+        if state["position"]:
+            return {"error": "Position already open"}, 400
+
+        candles_4h = get_candles("4H", 500)
+        candles_1h = get_candles("1H", 200)
+        if not candles_4h or not candles_1h:
+            return {"error": "No candle data"}, 400
+
+        box = build_daily_box(candles_4h)
+        if not box:
+            return {"error": "No box"}, 400
+        state["box"] = box
+
+        support, resistance = find_4h_sr(candles_4h, price)
+        balance = state["balance"]
+
+        with rt.lock:
+            closes_1h = list(rt.closes_1h)
+        highs_1h = [c["high"] for c in candles_1h]
+        lows_1h  = [c["low"]  for c in candles_1h]
+        bull_div, bear_div = detect_divergence(closes_1h, highs_1h[-20:], lows_1h[-20:])
+
+        if signal_type == "SHORT":
+            sl = round(resistance * 1.003, 2)
+            tp = box["mid"]
+            if tp >= price: tp = round(price * 0.99, 2)
+            if sl <= price: sl = round(price * 1.01, 2)
+            if sl > price * 1.015: sl = round(price * 1.015, 2)
+            risk_pct = RISK_PER_TRADE * 2 if bear_div else RISK_PER_TRADE
+        else:  # LONG
+            sl = round(support * 0.997, 2)
+            tp = box["mid"]
+            if tp <= price: tp = round(price * 1.01, 2)
+            if sl >= price: sl = round(price * 0.99, 2)
+            if sl < price * 0.985: sl = round(price * 0.985, 2)
+            risk_pct = RISK_PER_TRADE * 2 if bull_div else RISK_PER_TRADE
+
+        qty = calc_qty(balance, risk_pct, price, sl)
+        headlines = fetch_news()
+        score, summary = ai_news_score(headlines, signal_type, price, box)
+
+        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
+
+        if order_id:
+            state["position"] = {
+                "type": signal_type, "entry": price, "sl": sl, "tp": tp,
+                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "order_id": order_id, "news_score": score,
+                "news_summary": summary, "has_divergence": bear_div,
+                "source": "TradingView Webhook"
+            }
+            state["last_signal"] = signal_type
+            state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            save_state()
+            send_telegram(
+                f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[A] {signal_type} (TV Webhook)</b>\n"
+                f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
+                f"{'🔥 DIV' if bear_div else 'Normal'}"
+            )
+            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
+
+    elif strategy == "C":
+        # Strategy C — same as B but from webhook
+        if state_b.get("position_c"):
+            return {"error": "Position C already open"}, 400
+
+        candles_1h = get_candles("1H", 50)
+        if not candles_1h:
+            return {"error": "No candle data"}, 400
+
+        box = build_1h_box(candles_1h)
+        if not box:
+            return {"error": "No box"}, 400
+
+        balance = state_b.get("balance_c", 10000.0)
+
+        if signal_type == "SHORT":
+            tp_dist = price - box["mid"]
+            sl_dist = tp_dist / 2
+            tp = box["mid"]
+            sl = round(price + sl_dist, 2)
+        else:  # LONG
+            tp_dist = box["mid"] - price
+            sl_dist = tp_dist / 2
+            tp = box["mid"]
+            sl = round(price - sl_dist, 2)
+
+        qty = calc_qty(balance, RISK_PER_TRADE, price, sl)
+
+        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
+
+        if order_id:
+            state_b["position_c"] = {
+                "type": signal_type, "entry": price, "sl": sl, "tp": tp,
+                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "order_id": order_id, "has_divergence": False,
+                "source": "TradingView Webhook"
+            }
+            save_state_b()
+            send_telegram(
+                f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[C] {signal_type} (TV Webhook)</b>\n"
+                f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
+                f"R/R 2:1"
+            )
+            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
+
+    return {"error": "Invalid strategy"}, 400
+
+
+@app.route("/webhook/a", methods=["POST"])
+def webhook_a():
+    """TradingView webhook for Strategy A."""
+    try:
+        data = request.get_json(force=True) or {}
+        # TradingView sends: {"signal": "LONG"} or {"signal": "SHORT"}
+        signal = data.get("signal", "").upper()
+        price  = float(data.get("price", 0)) or None
+
+        if signal not in ("LONG", "SHORT"):
+            return {"error": f"Invalid signal: {signal}"}, 400
+
+        # Run in background thread to not block webhook response
+        def run():
+            execute_webhook_trade(signal, "A", price)
+        threading.Thread(target=run, daemon=True).start()
+
+        return {"ok": True, "received": signal, "strategy": "A"}
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route("/webhook/c", methods=["POST"])
+def webhook_c():
+    """TradingView webhook for Strategy C."""
+    try:
+        data = request.get_json(force=True) or {}
+        signal = data.get("signal", "").upper()
+        price  = float(data.get("price", 0)) or None
+
+        if signal not in ("LONG", "SHORT"):
+            return {"error": f"Invalid signal: {signal}"}, 400
+
+        def run():
+            execute_webhook_trade(signal, "C", price)
+        threading.Thread(target=run, daemon=True).start()
+
+        return {"ok": True, "received": signal, "strategy": "C"}
+    except Exception as e:
+        return {"error": str(e)}, 500
