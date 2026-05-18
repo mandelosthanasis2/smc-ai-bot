@@ -4,7 +4,7 @@ Beautiful UI with TradingView chart embedded
 """
 
 from flask import Flask, render_template_string, jsonify
-from bot import state, state_b, bot_thread
+from bot import state, state_b, state_c, bot_thread
 from config import PORT
 
 app = Flask(__name__)
@@ -1222,8 +1222,9 @@ def execute_webhook_trade(signal_type, strategy, price_override=None):
             return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
 
     elif strategy == "C":
-        # Strategy C — same as B but from webhook
-        if state_b.get("position_c"):
+        # Strategy C — webhook only, uses state_c
+        from bot import state_c, save_state_c, finalize_trade_c
+        if state_c.get("position"):
             return {"error": "Position C already open"}, 400
 
         candles_1h = get_candles("1H", 50)
@@ -1234,31 +1235,34 @@ def execute_webhook_trade(signal_type, strategy, price_override=None):
         if not box:
             return {"error": "No box"}, 400
 
-        balance = state_b.get("balance_c", 10000.0)
+        balance = state_c.get("balance", 10000.0)
 
         if signal_type == "SHORT":
             tp_dist = price - box["mid"]
+            if tp_dist <= 0: return {"error": "TP dist invalid for SHORT"}, 400
             sl_dist = tp_dist / 2
             tp = box["mid"]
             sl = round(price + sl_dist, 2)
         else:  # LONG
             tp_dist = box["mid"] - price
+            if tp_dist <= 0: return {"error": "TP dist invalid for LONG"}, 400
             sl_dist = tp_dist / 2
             tp = box["mid"]
             sl = round(price - sl_dist, 2)
 
         qty = calc_qty(balance, RISK_PER_TRADE, price, sl)
-
         order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
 
         if order_id:
-            state_b["position_c"] = {
+            state_c["position"] = {
                 "type": signal_type, "entry": price, "sl": sl, "tp": tp,
                 "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                 "order_id": order_id, "has_divergence": False,
                 "source": "TradingView Webhook"
             }
-            save_state_b()
+            state_c["last_signal"]      = signal_type
+            state_c["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            save_state_c()
             send_telegram(
                 f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[C] {signal_type} (TV Webhook)</b>\n"
                 f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
