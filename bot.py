@@ -270,15 +270,31 @@ class RealtimeData:
                         on_open    = self._on_open,
                         on_message = self.on_ws_message,
                         on_error   = lambda ws, e: log.error(f"WS error: {e}"),
-                        on_close   = lambda ws, *a: log.warning("WS closed"),
+                        on_close   = lambda ws, *a: log.warning("WS closed - reconnecting"),
                     )
-                    ws.run_forever(ping_interval=20, ping_timeout=10)
+                    ws.run_forever(
+                        ping_interval=15,
+                        ping_timeout=8,
+                        reconnect=5,
+                    )
                 except Exception as e:
                     log.error(f"WS run error: {e}")
-                log.info("WS reconnecting in 5s...")
-                time.sleep(5)
+                time.sleep(3)
 
         threading.Thread(target=run, daemon=True).start()
+
+        # Bitget requires a ping every 30s to keep connection alive
+        def keep_alive():
+            import time as t
+            while True:
+                t.sleep(25)
+                try:
+                    # Polling handles price updates when WS is down
+                    pass
+                except Exception:
+                    pass
+
+        threading.Thread(target=keep_alive, daemon=True).start()
         log.info("WebSocket started")
 
     def _on_open(self, ws):
@@ -491,6 +507,34 @@ SAVED_STATE_B = {
     ]
 }
 
+# Strategy C state (webhook only, same logic as B)
+DEFAULT_STATE_C = {
+    "position": None, "last_signal": "Starting...", "last_signal_time": "",
+    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
+    "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
+    "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+}
+
+STATE_FILE_C = "/app/bot_state_c.json"
+
+def load_state_c():
+    try:
+        if os.path.exists(STATE_FILE_C):
+            with open(STATE_FILE_C) as f: saved = json.load(f)
+            merged = {**DEFAULT_STATE_C, **saved}
+            log.info(f"State C loaded: ${merged.get('balance',10000):.2f} W{merged.get('wins',0)}/L{merged.get('losses',0)}")
+            return merged
+    except Exception as e:
+        log.warning(f"Load state C error: {e}")
+    return dict(DEFAULT_STATE_C)
+
+def save_state_c():
+    try:
+        with open(STATE_FILE_C, "w") as f:
+            json.dump(state_c, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Save state C error: {e}")
+
 def load_state():
     try:
         if os.path.exists(STATE_FILE):
@@ -536,6 +580,7 @@ def save_state_b():
 state   = load_state()
 state["running"] = True
 state_b = load_state_b()
+state_c = load_state_c()
 
 # =================================================================
 # NEWS
@@ -846,6 +891,64 @@ def run_strategy_a():
     log.info(f"[A] {state['last_signal']}")
 
 # =================================================================
+# POSITION MANAGEMENT - Strategy C (webhook only, same as B)
+# =================================================================
+
+def finalize_trade_c(price, result, note=""):
+    pos = state_c["position"]
+    if not pos: return
+    pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
+    state_c["pnl_total"] = round(state_c["pnl_total"]+pnl, 2)
+    state_c["balance"]   = round(state_c["balance"]  +pnl, 2)
+    if result=="WIN": state_c["wins"]   += 1
+    else:             state_c["losses"] += 1
+    state_c["trades"].append({
+        "type": pos["type"], "entry": pos["entry"], "close": price,
+        "pnl": pnl, "result": result,
+        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": pos.get("has_divergence", False), "note": note,
+    })
+    wins=state_c["wins"]; losses=state_c["losses"]
+    emoji = "✅" if result=="WIN" else "❌"
+    msg = (f"{emoji} <b>[C] {note or result}</b>\n"
+           f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
+           f"Balance: ${state_c['balance']:,.2f}\n"
+           f"W/L: {wins}W/{losses}L")
+    send_telegram(msg)
+    state_c["position"] = None
+    save_state_c()
+
+def check_position_c(price):
+    pos = state_c["position"]
+    if not pos: return
+
+    if os.environ.get("FORCE_CLOSE_C","").lower() == "true":
+        finalize_trade_c(price, "WIN" if price>pos["entry"] else "LOSS", "FORCE CLOSE")
+        return
+
+    entry   = pos["entry"]
+    tp      = pos["tp"]
+    is_long = pos["type"] == "LONG"
+    tp_dist = abs(tp-entry)
+
+    # Phase 1: 50% - Break Even
+    if tp_dist>0 and not pos.get("phase1_done"):
+        progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
+        if progress >= 0.50:
+            pos["sl"] = entry; pos["phase1_done"] = True
+            log.info(f"[C] Phase 1: SL -> entry @ {entry:.2f}")
+            send_telegram(f"🔒 <b>[C] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
+            save_state_c()
+
+    hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
+    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
+
+    if hit_tp: finalize_trade_c(tp, "WIN", "TAKE PROFIT")
+    elif hit_sl:
+        result = "WIN" if pos["sl"]>=entry else "LOSS"
+        finalize_trade_c(pos["sl"], result, "STOP LOSS")
+
+# =================================================================
 # STRATEGY B - 1H box + 15m RSI
 # =================================================================
 
@@ -986,6 +1089,17 @@ def bot_loop():
                 state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
                 state_b["errors"] = state_b["errors"][-10:]
             save_state_b()
+
+            # Strategy C: check open position every 30s (entries via webhook only)
+            state_c["last_cycle"]   = now_str
+            state_c["current_price"] = rt.price
+            state_c["current_rsi"]  = rt.rsi_15m
+            if state_c["position"]:
+                try:
+                    check_position_c(rt.price)
+                except Exception as e:
+                    log.error(f"Strategy C error: {e}")
+            save_state_c()
 
         except Exception as e:
             log.error(f"Main loop error: {e}")
