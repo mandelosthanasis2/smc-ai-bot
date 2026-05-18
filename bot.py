@@ -388,11 +388,23 @@ STATE_FILE   = "/app/bot_state.json"
 STATE_FILE_B = "/app/bot_state_b.json"
 
 SAVED_STATE = {
-    "balance": 10151.56, "pnl_total": 151.56, "wins": 1, "losses": 0,
-    "trades": [{"close":79452.85,"divergence":False,"entry":80865.3,
-                "news_score":0,"pnl":151.56,"result":"WIN",
-                "time":"2026-05-08 02:18","type":"SHORT"}],
-    "position": None,
+    "balance": 9948.55,
+    "pnl_total": -51.45,
+    "wins": 1,
+    "losses": 1,
+    "trades": [
+        {"close":79452.85,"divergence":False,"entry":80865.3,"news_score":0,
+         "pnl":151.56,"result":"WIN","time":"2026-05-08 02:18","type":"SHORT"},
+        {"close":76835.22,"divergence":False,"entry":78005.3,"news_score":0,
+         "note":"STOP LOSS","pnl":-203.01,"result":"LOSS","time":"2026-05-18 01:34","type":"LONG"},
+    ],
+    "position": {
+        "entry": 76780.1, "has_divergence": False, "news_score": 1,
+        "news_summary": "Regulatory clarity and institutional adoption drive positive sentiment for Bitcoin.",
+        "order_id": "PAPER_1779068086", "qty": 0.1728,
+        "sl": 75628.4, "time": "2026-05-18 01:34 UTC",
+        "tp": 77627.6, "type": "LONG"
+    },
 }
 
 DEFAULT_STATE = {
@@ -409,6 +421,74 @@ DEFAULT_STATE_B = {
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
     "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+}
+
+SAVED_STATE_B = {
+    "balance": 16548.61,
+    "pnl_total": 6548.61,
+    "wins": 28,
+    "losses": 24,
+    "position": {
+        "entry": 76878.2, "has_divergence": False,
+        "order_id": "PAPER_1779096734", "phase1_done": True,
+        "qty": 4.8388, "sl": 76878.2,
+        "time": "2026-05-18 09:32 UTC",
+        "tp": 77015.0, "type": "LONG"
+    },
+    "trades": [
+        {"close":77691.0,"divergence":True,"entry":77691.0,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-17 23:40","type":"LONG"},
+        {"close":76853.45,"divergence":True,"entry":77263.4,"note":"STOP LOSS","pnl":-399.99,"result":"LOSS","time":"2026-05-17 23:42","type":"LONG"},
+        {"close":76826.6,"divergence":True,"entry":76826.6,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-18 01:33","type":"LONG"},
+        {"close":77164.9,"divergence":False,"entry":76813.6,"note":"TAKE PROFIT","pnl":384.01,"result":"WIN","time":"2026-05-18 02:08","type":"LONG"},
+        {"close":76978.18,"divergence":True,"entry":76982.0,"note":"STOP LOSS","pnl":-399.36,"result":"LOSS","time":"2026-05-18 02:22","type":"LONG"},
+        {"close":76989.65,"divergence":True,"entry":76937.3,"note":"TAKE PROFIT","pnl":766.62,"result":"WIN","time":"2026-05-18 02:23","type":"LONG"},
+        {"close":76979.23,"divergence":False,"entry":76982.7,"note":"STOP LOSS","pnl":-207.03,"result":"LOSS","time":"2026-05-18 02:30","type":"LONG"},
+        {"close":76989.65,"divergence":False,"entry":76971.5,"note":"TAKE PROFIT","pnl":405.99,"result":"WIN","time":"2026-05-18 02:31","type":"LONG"},
+        {"close":76989.65,"divergence":False,"entry":76981.7,"note":"TAKE PROFIT","pnl":422.54,"result":"WIN","time":"2026-05-18 02:33","type":"LONG"},
+        {"close":76980.58,"divergence":False,"entry":76983.6,"note":"STOP LOSS","pnl":-219.46,"result":"LOSS","time":"2026-05-18 02:34","type":"LONG"},
+        {"close":76969.33,"divergence":False,"entry":76976.1,"note":"STOP LOSS","pnl":-215.07,"result":"LOSS","time":"2026-05-18 02:35","type":"LONG"},
+        {"close":76940.38,"divergence":False,"entry":76956.8,"note":"STOP LOSS","pnl":-210.77,"result":"LOSS","time":"2026-05-18 02:36","type":"LONG"},
+        {"close":76904.23,"divergence":True,"entry":76932.7,"note":"STOP LOSS","pnl":-413.1,"result":"LOSS","time":"2026-05-18 02:36","type":"LONG"},
+        {"close":76821.12,"divergence":True,"entry":76877.3,"note":"STOP LOSS","pnl":-396.57,"result":"LOSS","time":"2026-05-18 02:40","type":"LONG"},
+        {"close":76721.98,"divergence":True,"entry":76811.2,"note":"STOP LOSS","pnl":-380.71,"result":"LOSS","time":"2026-05-18 02:52","type":"LONG"},
+        {"close":76989.65,"divergence":True,"entry":76719.2,"note":"TAKE PROFIT","pnl":731.0,"result":"WIN","time":"2026-05-18 03:46","type":"LONG"},
+        {"close":76936.6,"divergence":False,"entry":76931.5,"note":"TAKE PROFIT","pnl":394.72,"result":"WIN","time":"2026-05-18 03:49","type":"LONG"},
+        {"close":76924.15,"divergence":False,"entry":76928.3,"note":"STOP LOSS","pnl":-205.26,"result":"LOSS","time":"2026-05-18 03:52","type":"LONG"},
+        {"close":76883.8,"divergence":False,"entry":76883.8,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-18 03:56","type":"LONG"},
+        {"close":76936.6,"divergence":False,"entry":76881.8,"note":"TAKE PROFIT","pnl":402.3,"result":"WIN","time":"2026-05-18 03:58","type":"LONG"},
+        {"close":76936.6,"divergence":False,"entry":76908.5,"note":"TAKE PROFIT","pnl":418.39,"result":"WIN","time":"2026-05-18 04:00","type":"LONG"},
+        {"close":76831.23,"divergence":False,"entry":76852.2,"note":"STOP LOSS","pnl":-217.57,"result":"LOSS","time":"2026-05-18 04:23","type":"LONG"},
+        {"close":76767.93,"divergence":False,"entry":76810.0,"note":"STOP LOSS","pnl":-213.21,"result":"LOSS","time":"2026-05-18 04:28","type":"LONG"},
+        {"close":76894.15,"divergence":False,"entry":76764.5,"note":"TAKE PROFIT","pnl":417.93,"result":"WIN","time":"2026-05-18 04:40","type":"LONG"},
+        {"close":76894.15,"divergence":False,"entry":76889.4,"note":"TAKE PROFIT","pnl":433.7,"result":"WIN","time":"2026-05-18 04:51","type":"LONG"},
+        {"close":76901.45,"divergence":True,"entry":76900.0,"note":"TAKE PROFIT","pnl":897.74,"result":"WIN","time":"2026-05-18 05:42","type":"LONG"},
+        {"close":76901.45,"divergence":True,"entry":76878.9,"note":"TAKE PROFIT","pnl":975.31,"result":"WIN","time":"2026-05-18 05:43","type":"LONG"},
+        {"close":76901.45,"divergence":False,"entry":76867.1,"note":"TAKE PROFIT","pnl":527.04,"result":"WIN","time":"2026-05-18 05:46","type":"LONG"},
+        {"close":76901.45,"divergence":False,"entry":76888.1,"note":"TAKE PROFIT","pnl":548.38,"result":"WIN","time":"2026-05-18 05:52","type":"LONG"},
+        {"close":76901.45,"divergence":False,"entry":76895.8,"note":"TAKE PROFIT","pnl":570.91,"result":"WIN","time":"2026-05-18 05:56","type":"LONG"},
+        {"close":76888.48,"divergence":False,"entry":76892.8,"note":"STOP LOSS","pnl":-296.37,"result":"LOSS","time":"2026-05-18 05:58","type":"LONG"},
+        {"close":76869.43,"divergence":False,"entry":76880.1,"note":"STOP LOSS","pnl":-290.44,"result":"LOSS","time":"2026-05-18 05:59","type":"LONG"},
+        {"close":76901.45,"divergence":False,"entry":76866.1,"note":"TAKE PROFIT","pnl":569.43,"result":"WIN","time":"2026-05-18 06:00","type":"LONG"},
+        {"close":76900.3,"divergence":False,"entry":76919.9,"note":"STOP LOSS","pnl":-296.02,"result":"LOSS","time":"2026-05-18 06:03","type":"LONG"},
+        {"close":76870.6,"divergence":False,"entry":76900.1,"note":"STOP LOSS","pnl":-290.1,"result":"LOSS","time":"2026-05-18 06:04","type":"LONG"},
+        {"close":76814.95,"divergence":False,"entry":76863.0,"note":"STOP LOSS","pnl":-284.3,"result":"LOSS","time":"2026-05-18 06:05","type":"LONG"},
+        {"close":76713.85,"divergence":False,"entry":76795.6,"note":"STOP LOSS","pnl":-278.61,"result":"LOSS","time":"2026-05-18 06:08","type":"LONG"},
+        {"close":76588.45,"divergence":False,"entry":76712.0,"note":"STOP LOSS","pnl":-273.05,"result":"LOSS","time":"2026-05-18 06:10","type":"LONG"},
+        {"close":76959.1,"divergence":False,"entry":76575.8,"note":"TAKE PROFIT","pnl":535.16,"result":"WIN","time":"2026-05-18 07:00","type":"LONG"},
+        {"close":76755.05,"divergence":False,"entry":76740.2,"note":"TAKE PROFIT","pnl":556.19,"result":"WIN","time":"2026-05-18 07:21","type":"LONG"},
+        {"close":76896.82,"divergence":False,"entry":76900.0,"note":"STOP LOSS","pnl":-289.41,"result":"LOSS","time":"2026-05-18 08:36","type":"LONG"},
+        {"close":76906.35,"divergence":False,"entry":76873.5,"note":"TAKE PROFIT","pnl":567.07,"result":"WIN","time":"2026-05-18 08:38","type":"LONG"},
+        {"close":76906.35,"divergence":False,"entry":76899.1,"note":"TAKE PROFIT","pnl":590.74,"result":"WIN","time":"2026-05-18 08:39","type":"LONG"},
+        {"close":76906.35,"divergence":False,"entry":76902.2,"note":"TAKE PROFIT","pnl":612.08,"result":"WIN","time":"2026-05-18 08:40","type":"LONG"},
+        {"close":76906.35,"divergence":False,"entry":76898.3,"note":"TAKE PROFIT","pnl":637.24,"result":"WIN","time":"2026-05-18 08:42","type":"LONG"},
+        {"close":76897.73,"divergence":False,"entry":76900.6,"note":"STOP LOSS","pnl":-331.76,"result":"LOSS","time":"2026-05-18 08:49","type":"LONG"},
+        {"close":76906.35,"divergence":False,"entry":76877.9,"note":"TAKE PROFIT","pnl":650.03,"result":"WIN","time":"2026-05-18 08:50","type":"LONG"},
+        {"close":77015.0,"divergence":False,"entry":77010.0,"note":"TAKE PROFIT","pnl":676.25,"result":"WIN","time":"2026-05-18 09:00","type":"LONG"},
+        {"close":76987.25,"divergence":False,"entry":76996.5,"note":"STOP LOSS","pnl":-351.65,"result":"LOSS","time":"2026-05-18 09:02","type":"LONG"},
+        {"close":76932.65,"divergence":False,"entry":76960.1,"note":"STOP LOSS","pnl":-344.62,"result":"LOSS","time":"2026-05-18 09:04","type":"LONG"},
+        {"close":76887.5,"divergence":False,"entry":76930.0,"note":"STOP LOSS","pnl":-337.73,"result":"LOSS","time":"2026-05-18 09:10","type":"LONG"},
+        {"close":76886.3,"divergence":False,"entry":76886.3,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-18 09:32","type":"LONG"},
+    ]
 }
 
 def load_state():
@@ -430,11 +510,14 @@ def load_state_b():
     try:
         if os.path.exists(STATE_FILE_B):
             with open(STATE_FILE_B) as f: saved = json.load(f)
-            log.info(f"State B loaded: ${saved.get('balance',10000):.2f}")
-            return {**DEFAULT_STATE_B, **saved}
+            merged = {**DEFAULT_STATE_B, **saved}
+            log.info(f"State B loaded: ${merged.get('balance',10000):.2f} W{merged.get('wins',0)}/L{merged.get('losses',0)}")
+            return merged
     except Exception as e:
         log.warning(f"Load state B error: {e}")
-    return dict(DEFAULT_STATE_B)
+    merged = {**DEFAULT_STATE_B, **SAVED_STATE_B}
+    log.info(f"SAVED_STATE_B: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+    return merged
 
 def save_state():
     try:
