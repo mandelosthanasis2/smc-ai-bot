@@ -4,7 +4,7 @@ Beautiful UI with TradingView chart embedded
 """
 
 from flask import Flask, render_template_string, jsonify
-from bot import state, state_b, state_c, bot_thread
+from bot import state, state_b, state_c, state_d, bot_thread
 from config import PORT
 from analytics import analytics_bp
 
@@ -283,6 +283,7 @@ DASHBOARD = """
         <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.25);color:#60a5fa;border:1px solid rgba(59,130,246,0.5);text-decoration:none;font-weight:600;">A</a>
         <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
         <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
+        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
         <a href="/analytics" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);text-decoration:none;">📊</a>
         <div class="pulse"></div>
         <span>LIVE</span>
@@ -875,6 +876,7 @@ body { background: var(--bg); color: var(--text); font-family: Inter, monospace;
         <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
         <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.25);color:#a855f7;border:1px solid rgba(139,92,246,0.5);text-decoration:none;font-weight:600;">B</a>
         <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
+        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
         <div class="pulse"></div>
         <span class="cycle-time">{{ last_cycle }}</span>
       </div>
@@ -1416,6 +1418,32 @@ def api_b():
 def api_c():
     return jsonify(state_c)
 
+@app.route("/api/d")
+def api_d():
+    return jsonify(state_d)
+
+@app.route("/d")
+def strategy_d():
+    s      = state_d
+    wins   = s.get("wins", 0)
+    losses = s.get("losses", 0)
+    total  = wins + losses
+    return render_template_string(
+        DASHBOARD_D,
+        balance       = s.get("balance", 10000),
+        pnl           = s.get("pnl_total", 0),
+        wins          = wins,
+        losses        = losses,
+        win_rate      = round(wins/total*100) if total > 0 else 0,
+        signal        = s.get("last_signal", "Waiting for TradingView signal..."),
+        signal_time   = s.get("last_signal_time", ""),
+        last_cycle    = s.get("last_cycle", ""),
+        position      = s.get("position"),
+        current_price = s.get("current_price", 0),
+        trades        = s.get("trades", []),
+        errors        = s.get("errors", []),
+    )
+
 @app.route("/c")
 def strategy_c():
     s      = state_c
@@ -1474,7 +1502,64 @@ def strategy_b():
 from flask import request
 import threading
 
-def execute_webhook_trade(signal_type, strategy, price_override=None):
+def execute_webhook_trade_d(signal_type, price_override=None, data=None):
+    """Execute Strategy D trade from TradingView OB+FVG+CHoCH webhook."""
+    from bot import rt, state_d, save_state_d, send_telegram, calc_qty, place_order_paper, place_order_live
+    from bot import TRADING_MODE, RISK_PER_TRADE
+    from datetime import datetime, timezone
+    if data is None: data = {}
+
+    price = price_override or rt.price
+    if price <= 0:
+        return {"error": "No price available"}, 400
+
+    if state_d["position"]:
+        return {"error": "Position already open for Strategy D"}, 400
+
+    is_long  = signal_type == "LONG"
+    # TradingView sends sl, tp1, tp2 — use them if available, fallback to calc
+    try:
+        sl  = float(data.get("sl",  0)) or (price * 0.985 if is_long else price * 1.015)
+        tp1 = float(data.get("tp1", 0)) or (price + abs(price - sl) * 2.0 if is_long else price - abs(sl - price) * 2.0)
+        tp2 = float(data.get("tp2", 0)) or (price + abs(price - sl) * 3.0 if is_long else price - abs(sl - price) * 3.0)
+    except Exception:
+        sl  = price * 0.985 if is_long else price * 1.015
+        sl_dist = abs(price - sl)
+        tp1 = price + sl_dist * 2.0 if is_long else price - sl_dist * 2.0
+        tp2 = price + sl_dist * 3.0 if is_long else price - sl_dist * 3.0
+
+    sl  = round(sl,  2)
+    tp1 = round(tp1, 2)
+    tp2 = round(tp2, 2)
+
+    confluence = data.get("confluence", "normal") == "strong"
+    risk_pct   = RISK_PER_TRADE * 2 if confluence else RISK_PER_TRADE
+    qty        = calc_qty(state_d["balance"], risk_pct, price, sl)
+
+    order_id = place_order_paper(signal_type, qty, price, sl, tp1) if TRADING_MODE == "PAPER" \
+               else place_order_live(signal_type, qty, sl, tp1)
+
+    if order_id:
+        state_d["position"] = {
+            "type": signal_type, "entry": price, "sl": sl,
+            "tp1": tp1, "tp2": tp2, "qty": qty,
+            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "order_id": order_id, "has_confluence": confluence,
+            "phase1_done": False, "source": "TradingView OB+FVG+CHoCH",
+        }
+        state_d["last_signal"]      = signal_type
+        state_d["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        save_state_d()
+        send_telegram(
+            f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[D] {signal_type} (OB+FVG+CHoCH)</b>\n"
+            f"Entry: ${price:,.2f}\n"
+            f"TP1: ${tp1:,.2f} (2:1) | TP2: ${tp2:,.2f} (3:1)\n"
+            f"SL: ${sl:,.2f}\n"
+            f"{'🔥 Strong Confluence' if confluence else 'Normal'}"
+        )
+        return {"ok": True, "trade": signal_type, "entry": price, "tp1": tp1, "tp2": tp2, "sl": sl}
+
+    return {"error": "Order failed"}, 500
     """Execute trade from TradingView webhook signal."""
     from bot import rt, state, state_b, run_strategy_a, build_daily_box, build_1h_box
     from bot import get_candles, calc_qty, place_order_paper, place_order_live
@@ -1643,6 +1728,268 @@ def webhook_c():
         threading.Thread(target=run, daemon=True).start()
 
         return {"ok": True, "received": signal, "strategy": "C"}
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+DASHBOARD_D = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMC AI Bot — Strategy D</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
+  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
+  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
+  --purple: #8b5cf6; --teal: #14b8a6;
+}
+body { background: var(--bg); color: var(--text); font-family: Inter, sans-serif; }
+.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
+.main-col { display: flex; flex-direction: column; }
+.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.logo { font-size: 15px; font-weight: 700; }
+.logo span { color: var(--teal); }
+.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
+.badge-d { background: rgba(20,184,166,0.15); color: var(--teal); border: 1px solid rgba(20,184,166,0.3); }
+.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge-tv { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
+.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); }
+.tf-btn.active { background: var(--teal); color: white; border-color: var(--teal); }
+.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
+.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
+.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
+.price-main { font-size: 28px; font-weight: 700; color: var(--teal); }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.stat-value { font-size: 18px; font-weight: 700; }
+.signal-box { padding: 14px 16px; background: var(--bg3); border-radius: 10px; border: 1px solid var(--border); }
+.signal-type { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.signal-detail { font-size: 10px; color: var(--text2); }
+.pos-card { background: var(--bg3); border-radius: 10px; border: 1px solid var(--border); padding: 14px; }
+.pos-row { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; }
+.pos-label { color: var(--text3); }
+.pos-val { font-weight: 600; }
+.trade-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 700; }
+.pill-long { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-short { background: rgba(239,68,68,0.15); color: var(--red); }
+.pill-win { background: rgba(16,185,129,0.15); color: var(--green); }
+.pill-loss { background: rgba(239,68,68,0.15); color: var(--red); }
+.nav-links { display: flex; gap: 6px; }
+.rr-badge { background: rgba(20,184,166,0.15); color: var(--teal); border: 1px solid rgba(20,184,166,0.3); font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main-col">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="logo">SMC <span>AI</span> Bot</div>
+        <span class="badge badge-d">STRATEGY D</span>
+        <span class="badge badge-paper">PAPER</span>
+        <span class="badge badge-tv">TV WEBHOOK</span>
+        <span class="rr-badge">R/R 2:1 / 3:1</span>
+      </div>
+      <div class="topbar-right">
+        <div class="nav-links">
+          <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
+          <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
+          <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
+        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
+          <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.25);color:#14b8a6;border:1px solid rgba(20,184,166,0.5);text-decoration:none;font-weight:700;">D</a>
+          <a href="/analytics" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);text-decoration:none;">📊</a>
+        </div>
+        <div class="pulse"></div>
+        <span id="live-time"></span>
+      </div>
+    </div>
+    <div class="chart-toolbar">
+      <span style="font-size:11px;color:var(--text3);margin-right:4px;">BTCUSDT PERP</span>
+      {% for tf in ['1m','5m','15m','1H','4H','1D'] %}
+      <button class="tf-btn {% if tf == '15m' %}active{% endif %}"
+              onclick="setTF('{{ tf }}', this)">{{ tf }}</button>
+      {% endfor %}
+    </div>
+    <div class="chart-wrap">
+      <div class="tradingview-widget-container">
+        <div id="tv_chart"></div>
+        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+        <script>
+        var tvWidget;
+        function initChart(interval) {
+          if (tvWidget) { try { tvWidget.remove(); } catch(e){} }
+          tvWidget = new TradingView.widget({
+            container_id: "tv_chart",
+            symbol: "BITGET:BTCUSDT.P",
+            interval: interval || "15",
+            timezone: "UTC",
+            theme: "dark",
+            style: "1",
+            locale: "en",
+            toolbar_bg: "#111827",
+            enable_publishing: false,
+            hide_top_toolbar: false,
+            hide_legend: false,
+            save_image: false,
+            studies: ["RSI@tv-basicstudies"],
+            width: "100%",
+            height: "100%",
+          });
+        }
+        initChart("15");
+        function setTF(tf, btn) {
+          document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const map = {'1m':'1','5m':'5','15m':'15','1H':'60','4H':'240','1D':'D'};
+          initChart(map[tf] || tf);
+        }
+        </script>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-col">
+    <!-- PRICE -->
+    <div class="price-display">
+      <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">BTCUSDT · Perpetual</div>
+      <div class="price-main" id="live-price">${{ "%.2f"|format(current_price) }}</div>
+    </div>
+
+    <!-- PERFORMANCE -->
+    <div class="side-section">
+      <div class="side-title">Performance</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Balance</div>
+          <div class="stat-value" style="color:var(--teal)">${{ "%.0f"|format(balance) }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total P&L</div>
+          <div class="stat-value" style="color:{% if pnl >= 0 %}var(--green){% else %}var(--red){% endif %}">
+            {{ '+' if pnl >= 0 else '' }}${{ "%.2f"|format(pnl) }}
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Win Rate</div>
+          <div class="stat-value" style="color:var(--teal)">{{ win_rate }}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">W / L</div>
+          <div class="stat-value">{{ wins }}W · {{ losses }}L</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CURRENT SIGNAL -->
+    <div class="side-section">
+      <div class="side-title">Current Signal</div>
+      <div class="signal-box">
+        {% if position %}
+          <div class="signal-type" style="color:{% if position.type=='LONG' %}var(--green){% else %}var(--red){% endif %}">
+            <span>▲</span> {{ position.type }}
+          </div>
+          <div class="signal-detail">{{ position.time }}</div>
+          {% if position.has_confluence %}
+          <div style="margin-top:6px;"><span class="badge" style="background:rgba(20,184,166,0.15);color:var(--teal);border:1px solid rgba(20,184,166,0.3);">🔥 Strong Confluence</span></div>
+          {% endif %}
+        {% else %}
+          <div class="signal-type" style="color:var(--text2)"><span>○</span> WAIT</div>
+          <div class="signal-detail">{{ signal }}</div>
+          {% if signal_time %}<div class="signal-detail">{{ signal_time }}</div>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- OPEN POSITION -->
+    {% if position %}
+    <div class="side-section">
+      <div class="side-title">Open Position</div>
+      <div class="pos-card">
+        <div class="pos-row"><span class="pos-label">Type</span><span class="pos-val" style="color:{% if position.type=='LONG' %}var(--green){% else %}var(--red){% endif %}">{{ position.type }}</span></div>
+        <div class="pos-row"><span class="pos-label">Entry</span><span class="pos-val">${{ "%.2f"|format(position.entry) }}</span></div>
+        <div class="pos-row"><span class="pos-label">TP1 (2:1)</span><span class="pos-val" style="color:var(--green)">${{ "%.2f"|format(position.tp1) }}</span></div>
+        <div class="pos-row"><span class="pos-label">TP2 (3:1)</span><span class="pos-val" style="color:var(--teal)">${{ "%.2f"|format(position.tp2) }}</span></div>
+        <div class="pos-row"><span class="pos-label">Stop Loss</span><span class="pos-val" style="color:var(--red)">${{ "%.2f"|format(position.sl) }}</span></div>
+        <div class="pos-row"><span class="pos-label">Qty</span><span class="pos-val">{{ position.qty }}</span></div>
+        {% if position.phase1_done %}
+        <div style="margin-top:8px;padding:6px;background:rgba(16,185,129,0.1);border-radius:6px;font-size:10px;color:var(--green);text-align:center;">✓ TP1 HIT — Riding to TP2</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- TRADE HISTORY -->
+    <div class="side-section">
+      <div class="side-title">Trade History</div>
+      {% if trades %}
+        {% for t in trades|reverse %}
+        {% if loop.index <= 15 %}
+        <div class="trade-row">
+          <div>
+            <span class="pill pill-{{ t.type|lower }}">{{ t.type }}</span>
+            <div style="font-size:9px;color:var(--text3);margin-top:2px;">{{ t.time[5:16] if t.time else '' }}</div>
+          </div>
+          <div style="font-size:10px;color:var(--text2)">{{ t.note or '—' }}</div>
+          <div style="font-size:11px;font-weight:600;color:{% if t.pnl >= 0 %}var(--green){% else %}var(--red){% endif %}">
+            {{ '+' if t.pnl >= 0 else '' }}${{ "%.1f"|format(t.pnl) }}
+          </div>
+          <span class="pill pill-{{ t.result|lower }}">{{ t.result }}</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+      {% else %}
+        <div style="color:var(--text3);font-size:11px;">No trades yet</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+// Live clock
+setInterval(() => {
+  document.getElementById('live-time').textContent =
+    new Date().toUTCString().slice(17,25) + ' UTC';
+}, 1000);
+
+// Auto-refresh data every 10s
+setInterval(() => {
+  fetch('/api/d').then(r => r.json()).then(d => {
+    const price = d.current_price || 0;
+    if (price > 0) document.getElementById('live-price').textContent = '$' + price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  });
+}, 10000);
+</script>
+</body>
+</html>
+"""
+
+@app.route("/webhook/d", methods=["POST"])
+def webhook_d():
+    """TradingView webhook for Strategy D (OB + FVG + CHoCH)."""
+    try:
+        data   = request.get_json(force=True) or {}
+        signal = data.get("signal", "").upper()
+        price  = float(data.get("price", 0)) or None
+
+        if signal not in ("LONG", "SHORT"):
+            return {"error": f"Invalid signal: {signal}"}, 400
+
+        def run():
+            execute_webhook_trade_d(signal, price, data)
+        threading.Thread(target=run, daemon=True).start()
+
+        return {"ok": True, "received": signal, "strategy": "D"}
     except Exception as e:
         return {"error": str(e)}, 500
 
