@@ -404,23 +404,19 @@ STATE_FILE   = "/app/bot_state.json"
 STATE_FILE_B = "/app/bot_state_b.json"
 
 SAVED_STATE = {
-    "balance": 9948.55,
-    "pnl_total": -51.45,
-    "wins": 1,
+    "balance": 9949.11,
+    "pnl_total": -50.89,
+    "wins": 3,
     "losses": 1,
+    "position": None,
     "trades": [
         {"close":79452.85,"divergence":False,"entry":80865.3,"news_score":0,
          "pnl":151.56,"result":"WIN","time":"2026-05-08 02:18","type":"SHORT"},
         {"close":76835.22,"divergence":False,"entry":78005.3,"news_score":0,
          "note":"STOP LOSS","pnl":-203.01,"result":"LOSS","time":"2026-05-18 01:34","type":"LONG"},
+        {"close":76780.1,"divergence":False,"entry":76780.1,"news_score":1,
+         "note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-19 01:26","type":"LONG"},
     ],
-    "position": {
-        "entry": 76780.1, "has_divergence": False, "news_score": 1,
-        "news_summary": "Regulatory clarity and institutional adoption drive positive sentiment for Bitcoin.",
-        "order_id": "PAPER_1779068086", "qty": 0.1728,
-        "sl": 75628.4, "time": "2026-05-18 01:34 UTC",
-        "tp": 77627.6, "type": "LONG"
-    },
 }
 
 DEFAULT_STATE = {
@@ -440,17 +436,11 @@ DEFAULT_STATE_B = {
 }
 
 SAVED_STATE_B = {
-    "balance": 16548.61,
-    "pnl_total": 6548.61,
-    "wins": 28,
+    "balance": 17210.56,
+    "pnl_total": 7210.56,
+    "wins": 29,
     "losses": 24,
-    "position": {
-        "entry": 76878.2, "has_divergence": False,
-        "order_id": "PAPER_1779096734", "phase1_done": True,
-        "qty": 4.8388, "sl": 76878.2,
-        "time": "2026-05-18 09:32 UTC",
-        "tp": 77015.0, "type": "LONG"
-    },
+    "position": None,
     "trades": [
         {"close":77691.0,"divergence":True,"entry":77691.0,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-17 23:40","type":"LONG"},
         {"close":76853.45,"divergence":True,"entry":77263.4,"note":"STOP LOSS","pnl":-399.99,"result":"LOSS","time":"2026-05-17 23:42","type":"LONG"},
@@ -504,6 +494,8 @@ SAVED_STATE_B = {
         {"close":76932.65,"divergence":False,"entry":76960.1,"note":"STOP LOSS","pnl":-344.62,"result":"LOSS","time":"2026-05-18 09:04","type":"LONG"},
         {"close":76887.5,"divergence":False,"entry":76930.0,"note":"STOP LOSS","pnl":-337.73,"result":"LOSS","time":"2026-05-18 09:10","type":"LONG"},
         {"close":76886.3,"divergence":False,"entry":76886.3,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-18 09:32","type":"LONG"},
+        {"close":76886.3,"divergence":False,"entry":76886.3,"note":"STOP LOSS","pnl":0.0,"result":"WIN","time":"2026-05-18 09:32","type":"LONG"},
+        {"close":76978.0,"divergence":False,"entry":76878.2,"note":"TAKE PROFIT","pnl":662.0,"result":"WIN","time":"2026-05-18 13:53","type":"LONG"},
     ]
 }
 
@@ -513,6 +505,17 @@ DEFAULT_STATE_C = {
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
     "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+}
+
+SAVED_STATE_C = {
+    "balance": 10399.98,
+    "pnl_total": 399.98,
+    "wins": 1,
+    "losses": 0,
+    "position": None,
+    "trades": [
+        {"close":77200.0,"divergence":False,"entry":76800.0,"note":"TAKE PROFIT","pnl":400.0,"result":"WIN","time":"2026-05-18 16:19","type":"LONG"},
+    ],
 }
 
 STATE_FILE_C = "/app/bot_state_c.json"
@@ -526,7 +529,9 @@ def load_state_c():
             return merged
     except Exception as e:
         log.warning(f"Load state C error: {e}")
-    return dict(DEFAULT_STATE_C)
+    merged = {**DEFAULT_STATE_C, **SAVED_STATE_C}
+    log.info(f"SAVED_STATE_C: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+    return merged
 
 def save_state_c():
     try:
