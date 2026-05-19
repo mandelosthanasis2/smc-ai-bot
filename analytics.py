@@ -14,6 +14,7 @@ STRATEGIES = {
     "A": {"name": "Strategy A", "color": "#3b82f6", "desc": "Daily Box + 1H RSI"},
     "B": {"name": "Strategy B", "color": "#8b5cf6", "desc": "1H Box + 15m RSI"},
     "C": {"name": "Strategy C", "color": "#f97316", "desc": "TV Webhook + 1H Box"},
+    "D": {"name": "Strategy D", "color": "#14b8a6", "desc": "OB + FVG + CHoCH"},
 }
 
 # =================================================================
