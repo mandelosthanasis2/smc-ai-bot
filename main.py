@@ -6,8 +6,10 @@ Beautiful UI with TradingView chart embedded
 from flask import Flask, render_template_string, jsonify
 from bot import state, state_b, state_c, bot_thread
 from config import PORT
+from analytics import analytics_bp
 
 app = Flask(__name__)
+app.register_blueprint(analytics_bp)
 bot_thread.start()
 
 DASHBOARD = """
@@ -281,7 +283,7 @@ DASHBOARD = """
         <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.25);color:#60a5fa;border:1px solid rgba(59,130,246,0.5);text-decoration:none;font-weight:600;">A</a>
         <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
         <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
-        <div class="divider"></div>
+        <a href="/analytics" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);text-decoration:none;">📊</a>
         <div class="pulse"></div>
         <span>LIVE</span>
         <span class="cycle-time" style="margin-left:4px;">{{ last_cycle }}</span>
