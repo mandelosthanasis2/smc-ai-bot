@@ -520,6 +520,50 @@ SAVED_STATE_C = {
 }
 
 STATE_FILE_C = "/app/bot_state_c.json"
+STATE_FILE_D = "/app/bot_state_d.json"
+
+# ── Strategy D defaults ──────────────────────────────────────────
+DEFAULT_STATE_D = {
+    "position": None, "last_signal": "Starting...", "last_signal_time": "",
+    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
+    "wins": 0, "losses": 0, "current_price": 0.0,
+    "last_cycle": "", "errors": [], "last_ob": None, "last_fvg": None,
+}
+
+SAVED_STATE_D = {
+    "balance": 10000.0,
+    "pnl_total": 0.0,
+    "wins": 0,
+    "losses": 0,
+    "position": None,
+    "trades": [],
+}
+
+def load_state_d():
+    db = db_load_state("D")
+    if db:
+        merged = {**DEFAULT_STATE_D, **db}
+        log.info(f"State D from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    try:
+        if os.path.exists(STATE_FILE_D):
+            with open(STATE_FILE_D) as f: saved = json.load(f)
+            merged = {**DEFAULT_STATE_D, **saved}
+            log.info(f"State D from JSON: ${merged.get('balance',10000):.2f}")
+            return merged
+    except Exception as e:
+        log.warning(f"Load state D JSON error: {e}")
+    merged = {**DEFAULT_STATE_D, **SAVED_STATE_D}
+    log.info(f"State D from SAVED_STATE_D: ${merged['balance']:.2f}")
+    return merged
+
+def save_state_d():
+    db_save_state("D", state_d)
+    try:
+        with open(STATE_FILE_D, "w") as f:
+            json.dump(state_d, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Save state D JSON error: {e}")
 
 def load_state_c():
     # 1) Προσπαθεί από DB
@@ -624,11 +668,13 @@ init_db()
 seed_if_empty("A", SAVED_STATE)
 seed_if_empty("B", SAVED_STATE_B)
 seed_if_empty("C", SAVED_STATE_C)
+seed_if_empty("D", SAVED_STATE_D)
 
 state   = load_state()
 state["running"] = True
 state_b = load_state_b()
 state_c = load_state_c()
+state_d = load_state_d()
 
 # =================================================================
 # NEWS
@@ -1088,6 +1134,97 @@ def run_strategy_b():
     log.info(f"[B] {state_b['last_signal']}")
 
 # =================================================================
+# POSITION MANAGEMENT - Strategy D (OB + FVG + CHoCH, webhook only)
+# 2-phase TP: TP1 at 2:1 (50% close), TP2 at 3:1 (remainder)
+# =================================================================
+
+def finalize_trade_d(price, result, note=""):
+    pos = state_d["position"]
+    if not pos: return
+    pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
+    state_d["pnl_total"] = round(state_d["pnl_total"] + pnl, 2)
+    state_d["balance"]   = round(state_d["balance"]   + pnl, 2)
+    if result == "WIN": state_d["wins"]   += 1
+    else:               state_d["losses"] += 1
+    trade_d = {
+        "type":       pos["type"],
+        "entry":      pos["entry"],
+        "close":      price,
+        "pnl":        pnl,
+        "result":     result,
+        "time":       datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": pos.get("has_confluence", False),
+        "note":       note,
+    }
+    state_d["trades"].append(trade_d)
+    db_save_trade("D", trade_d)
+    wins = state_d["wins"]; losses = state_d["losses"]
+    emoji = "✅" if result == "WIN" else "❌"
+    send_telegram(
+        f"{emoji} <b>[D] {note or result}</b>\n"
+        f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
+        f"Balance: ${state_d['balance']:,.2f}\n"
+        f"W/L: {wins}W/{losses}L"
+    )
+    state_d["position"] = None
+    save_state_d()
+
+def check_position_d(price):
+    pos = state_d["position"]
+    if not pos: return
+
+    if os.environ.get("FORCE_CLOSE_D", "").lower() == "true":
+        finalize_trade_d(price, "WIN" if price > pos["entry"] else "LOSS", "FORCE CLOSE")
+        return
+
+    entry   = pos["entry"]
+    sl      = pos["sl"]
+    tp1     = pos["tp1"]
+    tp2     = pos["tp2"]
+    is_long = pos["type"] == "LONG"
+
+    # Phase 1: TP1 hit → close 50%, move SL to entry
+    if not pos.get("phase1_done"):
+        hit_tp1 = (is_long and price >= tp1) or (not is_long and price <= tp1)
+        if hit_tp1:
+            # Close 50% of position at TP1
+            partial_qty = round(pos["qty"] * 0.5, 6)
+            partial_pnl = round(((tp1 - entry) if is_long else (entry - tp1)) * partial_qty, 2)
+            state_d["balance"]   = round(state_d["balance"]   + partial_pnl, 2)
+            state_d["pnl_total"] = round(state_d["pnl_total"] + partial_pnl, 2)
+            state_d["wins"]     += 1
+            trade_d = {
+                "type": pos["type"], "entry": entry, "close": tp1,
+                "pnl": partial_pnl, "result": "WIN",
+                "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "divergence": pos.get("has_confluence", False), "note": "TP1 (50%)",
+            }
+            state_d["trades"].append(trade_d)
+            db_save_trade("D", trade_d)
+            # Move SL to entry (break even) and reduce qty
+            pos["sl"]          = entry
+            pos["qty"]         = round(pos["qty"] * 0.5, 6)
+            pos["phase1_done"] = True
+            log.info(f"[D] TP1 hit @ {tp1:.2f} | +${partial_pnl:.2f} | SL → entry")
+            send_telegram(
+                f"🎯 <b>[D] TP1 HIT (50%)</b>\n"
+                f"Close: ${tp1:,.2f} | PnL: +${partial_pnl:.2f}\n"
+                f"SL → Break Even | Riding to TP2: ${tp2:,.2f}"
+            )
+            save_state_d()
+            return
+
+    # Phase 2: TP2 or SL
+    hit_tp2 = (is_long and price >= tp2) or (not is_long and price <= tp2)
+    hit_sl  = (is_long and price <= sl)  or (not is_long and price >= sl)
+
+    if hit_tp2:
+        finalize_trade_d(tp2, "WIN", "TP2")
+    elif hit_sl:
+        result = "WIN" if (is_long and sl >= entry) or (not is_long and sl <= entry) else "LOSS"
+        finalize_trade_d(sl, result, "STOP LOSS")
+
+# =================================================================
 # BOT LOOP
 # =================================================================
 
@@ -1097,6 +1234,8 @@ def bot_loop():
     log.info(f"  Mode: {TRADING_MODE} | Leverage: {LEVERAGE}x")
     log.info(f"  Balance A: ${state['balance']:.2f} W{state['wins']}/L{state['losses']}")
     log.info(f"  Balance B: ${state_b['balance']:.2f}")
+    log.info(f"  Balance C: ${state_c['balance']:.2f}")
+    log.info(f"  Balance D: ${state_d['balance']:.2f}")
     log.info("=" * 45)
 
     rt.load_history()
@@ -1109,6 +1248,8 @@ def bot_loop():
         f"Mode: {TRADING_MODE}\n"
         f"Balance A: ${state['balance']:.2f} | W{state['wins']}/L{state['losses']}\n"
         f"Balance B: ${state_b['balance']:.2f}\n"
+        f"Balance C: ${state_c['balance']:.2f}\n"
+        f"Balance D: ${state_d['balance']:.2f}\n"
         f"RSI: Real-time WebSocket\n"
         f"Strategy A: 60s | Strategy B: 30s"
     )
@@ -1145,15 +1286,25 @@ def bot_loop():
             save_state_b()
 
             # Strategy C: check open position every 30s (entries via webhook only)
-            state_c["last_cycle"]   = now_str
+            state_c["last_cycle"]    = now_str
             state_c["current_price"] = rt.price
-            state_c["current_rsi"]  = rt.rsi_15m
+            state_c["current_rsi"]   = rt.rsi_15m
             if state_c["position"]:
                 try:
                     check_position_c(rt.price)
                 except Exception as e:
                     log.error(f"Strategy C error: {e}")
             save_state_c()
+
+            # Strategy D: check open position every 30s (entries via webhook only)
+            state_d["last_cycle"]    = now_str
+            state_d["current_price"] = rt.price
+            if state_d["position"]:
+                try:
+                    check_position_d(rt.price)
+                except Exception as e:
+                    log.error(f"Strategy D error: {e}")
+            save_state_d()
 
         except Exception as e:
             log.error(f"Main loop error: {e}")
