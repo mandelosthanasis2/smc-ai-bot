@@ -17,6 +17,7 @@ from collections import deque
 from datetime import datetime, timezone
 import anthropic
 from config import *
+from database import init_db, seed_if_empty, db_load_state, db_save_state, db_save_trade
 
 # -- LOGGING ------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -521,66 +522,108 @@ SAVED_STATE_C = {
 STATE_FILE_C = "/app/bot_state_c.json"
 
 def load_state_c():
+    # 1) Προσπαθεί από DB
+    db = db_load_state("C")
+    if db:
+        merged = {**DEFAULT_STATE_C, **db}
+        log.info(f"State C from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    # 2) Fallback: JSON file
     try:
         if os.path.exists(STATE_FILE_C):
             with open(STATE_FILE_C) as f: saved = json.load(f)
             merged = {**DEFAULT_STATE_C, **saved}
-            log.info(f"State C loaded: ${merged.get('balance',10000):.2f} W{merged.get('wins',0)}/L{merged.get('losses',0)}")
+            log.info(f"State C from JSON: ${merged.get('balance',10000):.2f}")
             return merged
     except Exception as e:
-        log.warning(f"Load state C error: {e}")
+        log.warning(f"Load state C JSON error: {e}")
+    # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE_C, **SAVED_STATE_C}
-    log.info(f"SAVED_STATE_C: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+    log.info(f"State C from SAVED_STATE_C: ${merged['balance']:.2f}")
     return merged
 
 def save_state_c():
+    # Αποθήκευση στη DB
+    db_save_state("C", state_c)
+    # Backup JSON (fallback)
     try:
         with open(STATE_FILE_C, "w") as f:
             json.dump(state_c, f, indent=2, default=str)
     except Exception as e:
-        log.warning(f"Save state C error: {e}")
+        log.warning(f"Save state C JSON error: {e}")
 
 def load_state():
+    # 1) Προσπαθεί από DB
+    db = db_load_state("A")
+    if db:
+        merged = {**DEFAULT_STATE, **db}
+        merged["running"] = True; merged["mode"] = TRADING_MODE
+        log.info(f"State A from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    # 2) Fallback: JSON file
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE) as f: saved = json.load(f)
             merged = {**DEFAULT_STATE, **saved}
             merged["running"] = True; merged["mode"] = TRADING_MODE
-            log.info(f"State A loaded: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+            log.info(f"State A from JSON: ${merged['balance']:.2f}")
             return merged
     except Exception as e:
-        log.warning(f"Load state error: {e}")
+        log.warning(f"Load state A JSON error: {e}")
+    # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE, **SAVED_STATE}
     merged["running"] = True; merged["mode"] = TRADING_MODE
-    log.info(f"SAVED_STATE: ${merged['balance']:.2f}")
+    log.info(f"State A from SAVED_STATE: ${merged['balance']:.2f}")
     return merged
 
 def load_state_b():
+    # 1) Προσπαθεί από DB
+    db = db_load_state("B")
+    if db:
+        merged = {**DEFAULT_STATE_B, **db}
+        log.info(f"State B from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    # 2) Fallback: JSON file
     try:
         if os.path.exists(STATE_FILE_B):
             with open(STATE_FILE_B) as f: saved = json.load(f)
             merged = {**DEFAULT_STATE_B, **saved}
-            log.info(f"State B loaded: ${merged.get('balance',10000):.2f} W{merged.get('wins',0)}/L{merged.get('losses',0)}")
+            log.info(f"State B from JSON: ${merged.get('balance',10000):.2f}")
             return merged
     except Exception as e:
-        log.warning(f"Load state B error: {e}")
+        log.warning(f"Load state B JSON error: {e}")
+    # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE_B, **SAVED_STATE_B}
-    log.info(f"SAVED_STATE_B: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+    log.info(f"State B from SAVED_STATE_B: ${merged['balance']:.2f}")
     return merged
 
 def save_state():
+    # Αποθήκευση στη DB
+    db_save_state("A", state)
+    # Backup JSON (fallback)
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({k:v for k,v in state.items() if k!="running"}, f, indent=2, default=str)
     except Exception as e:
-        log.warning(f"Save state error: {e}")
+        log.warning(f"Save state A JSON error: {e}")
 
 def save_state_b():
+    # Αποθήκευση στη DB
+    db_save_state("B", state_b)
+    # Backup JSON (fallback)
     try:
         with open(STATE_FILE_B, "w") as f:
             json.dump(state_b, f, indent=2, default=str)
     except Exception as e:
-        log.warning(f"Save state B error: {e}")
+        log.warning(f"Save state B JSON error: {e}")
+
+# =================================================================
+# DB INIT + SEED (τρέχει μία φορά στο startup)
+# =================================================================
+init_db()
+seed_if_empty("A", SAVED_STATE)
+seed_if_empty("B", SAVED_STATE_B)
+seed_if_empty("C", SAVED_STATE_C)
 
 state   = load_state()
 state["running"] = True
@@ -655,13 +698,15 @@ def finalize_trade_a(price, result, note=""):
     state["balance"]   = round(state["balance"]   + pnl, 2)
     if result == "WIN": state["wins"]   += 1
     else:               state["losses"] += 1
-    state["trades"].append({
+    trade = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "news_score": pos.get("news_score", 0),
         "divergence": pos.get("has_divergence", False), "note": note,
-    })
+    }
+    state["trades"].append(trade)
+    db_save_trade("A", trade)
     wins = state["wins"]; losses = state["losses"]
     wr   = round(wins/(wins+losses)*100) if wins+losses>0 else 0
     emoji = "✅" if result=="WIN" else "❌"
@@ -749,12 +794,14 @@ def finalize_trade_b(price, result, note=""):
     state_b["balance"]   = round(state_b["balance"]  +pnl, 2)
     if result=="WIN": state_b["wins"]   += 1
     else:             state_b["losses"] += 1
-    state_b["trades"].append({
+    trade_b = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_divergence", False), "note": note,
-    })
+    }
+    state_b["trades"].append(trade_b)
+    db_save_trade("B", trade_b)
     wins=state_b["wins"]; losses=state_b["losses"]
     emoji = "✅" if result=="WIN" else "❌"
     send_telegram(
@@ -907,12 +954,14 @@ def finalize_trade_c(price, result, note=""):
     state_c["balance"]   = round(state_c["balance"]  +pnl, 2)
     if result=="WIN": state_c["wins"]   += 1
     else:             state_c["losses"] += 1
-    state_c["trades"].append({
+    trade_c = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_divergence", False), "note": note,
-    })
+    }
+    state_c["trades"].append(trade_c)
+    db_save_trade("C", trade_c)
     wins=state_c["wins"]; losses=state_c["losses"]
     emoji = "✅" if result=="WIN" else "❌"
     msg = (f"{emoji} <b>[C] {note or result}</b>\n"
