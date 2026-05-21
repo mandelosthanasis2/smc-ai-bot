@@ -1639,38 +1639,50 @@ def execute_webhook_trade_d(signal_type, price_override=None, data=None):
             return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
 
     elif strategy == "C":
-        # Strategy C — webhook only, uses state_c
+        # Strategy C — webhook only, uses tp/sl from TradingView (R/R 2:1)
         from bot import state_c, save_state_c, finalize_trade_c
         if state_c.get("position"):
+            log.warning("[C] Webhook received but position already open — skipping")
             return {"error": "Position C already open"}, 400
 
-        candles_1h = get_candles("1H", 50)
-        if not candles_1h:
-            return {"error": "No candle data"}, 400
+        # Παίρνουμε tp/sl από TradingView — έχουν ήδη υπολογιστεί σωστά
+        tp = float(data.get("tp", 0)) if data else 0
+        sl = float(data.get("sl", 0)) if data else 0
 
-        box = build_1h_box(candles_1h)
-        if not box:
-            return {"error": "No box"}, 400
+        # Fallback: υπολογισμός από box αν δεν στάλθηκαν
+        if not tp or not sl:
+            log.warning("[C] No tp/sl in webhook — calculating from box")
+            candles_1h = get_candles("1H", 50)
+            if not candles_1h:
+                return {"error": "No candle data"}, 400
+            box = build_1h_box(candles_1h)
+            if not box:
+                return {"error": "No box"}, 400
+            if signal_type == "SHORT":
+                tp = box["mid"]
+                sl = round(price + (price - box["mid"]) / 2, 2)
+            else:
+                tp = box["mid"]
+                sl = round(price - (box["mid"] - price) / 2, 2)
+        else:
+            tp = round(tp, 2)
+            sl = round(sl, 2)
+
+        # Validation
+        if signal_type == "SHORT" and (tp >= price or sl <= price):
+            log.warning(f"[C] Invalid SHORT levels: entry={price} tp={tp} sl={sl}")
+            return {"error": f"Invalid SHORT levels: entry={price} tp={tp} sl={sl}"}, 400
+        if signal_type == "LONG" and (tp <= price or sl >= price):
+            log.warning(f"[C] Invalid LONG levels: entry={price} tp={tp} sl={sl}")
+            return {"error": f"Invalid LONG levels: entry={price} tp={tp} sl={sl}"}, 400
 
         balance = state_c.get("balance", 10000.0)
-
-        if signal_type == "SHORT":
-            tp_dist = price - box["mid"]
-            if tp_dist <= 0: return {"error": "TP dist invalid for SHORT"}, 400
-            sl_dist = tp_dist / 2
-            tp = box["mid"]
-            sl = round(price + sl_dist, 2)
-        else:  # LONG
-            tp_dist = box["mid"] - price
-            if tp_dist <= 0: return {"error": "TP dist invalid for LONG"}, 400
-            sl_dist = tp_dist / 2
-            tp = box["mid"]
-            sl = round(price - sl_dist, 2)
-
         qty = calc_qty(balance, RISK_PER_TRADE, price, sl)
-        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
+        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER" \
+                   else place_order_live(signal_type, qty, sl, tp)
 
         if order_id:
+            rr = round(abs(tp - price) / abs(sl - price), 2)
             state_c["position"] = {
                 "type": signal_type, "entry": price, "sl": sl, "tp": tp,
                 "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -1680,12 +1692,13 @@ def execute_webhook_trade_d(signal_type, price_override=None, data=None):
             state_c["last_signal"]      = signal_type
             state_c["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_c()
+            log.info(f"[C] {signal_type} opened: entry={price} tp={tp} sl={sl} R/R={rr}")
             send_telegram(
                 f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[C] {signal_type} (TV Webhook)</b>\n"
                 f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
-                f"R/R 2:1"
+                f"R/R: {rr}:1"
             )
-            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
+            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl, "rr": rr}
 
     return {"error": "Invalid strategy"}, 400
 
