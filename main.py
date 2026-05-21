@@ -1,15 +1,19 @@
 """
-main.py — SMC AI Bot Dashboard v2
-Beautiful UI with TradingView chart embedded
+main.py — NRM Bot Dashboard
+Multi-user SaaS with login, settings, admin panel
 """
 
-from flask import Flask, render_template_string, jsonify
+import os
+from flask import Flask, render_template_string, jsonify, session, redirect
 from bot import state, state_b, state_c, state_d, bot_thread
 from config import PORT
 from analytics import analytics_bp
+from auth import auth_bp, login_required
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "nrmbot-secret-2024")
 app.register_blueprint(analytics_bp)
+app.register_blueprint(auth_bp)
 bot_thread.start()
 
 DASHBOARD = """
@@ -1377,6 +1381,7 @@ updateData();
 """
 
 @app.route("/")
+@login_required
 def index():
     s      = state
     wins   = s["wins"]
@@ -1407,22 +1412,27 @@ def index():
 
 
 @app.route("/api")
+@login_required
 def api():
     return jsonify(state)
 
 @app.route("/api/b")
+@login_required
 def api_b():
     return jsonify(state_b)
 
 @app.route("/api/c")
+@login_required
 def api_c():
     return jsonify(state_c)
 
 @app.route("/api/d")
+@login_required
 def api_d():
     return jsonify(state_d)
 
 @app.route("/d")
+@login_required
 def strategy_d():
     s      = state_d
     wins   = s.get("wins", 0)
@@ -1445,6 +1455,7 @@ def strategy_d():
     )
 
 @app.route("/c")
+@login_required
 def strategy_c():
     s      = state_c
     wins   = s.get("wins", 0)
@@ -1470,6 +1481,7 @@ def strategy_c():
     )
 
 @app.route("/b")
+@login_required
 def strategy_b():
     s    = state_b
     wins = s.get("wins", 0)
@@ -2007,6 +2019,6 @@ def webhook_d():
         return {"error": str(e)}, 500
 
 if __name__ == "__main__":
-    print(f"\n🚀 SMC AI Bot starting on port {PORT}")
+    print(f"\n🚀 NRM Bot starting on port {PORT}")
     print(f"   Dashboard: http://localhost:{PORT}\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
