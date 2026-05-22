@@ -1,10 +1,10 @@
 """
-main.py — NRM Bot Dashboard
-Multi-user SaaS with login, settings, admin panel
+main.py — NRM Bot v2
+New design: sidebar, cards, mobile-first, no TradingView
 """
 
 import os
-from flask import Flask, render_template_string, jsonify, session, redirect
+from flask import Flask, render_template_string, jsonify, session
 from bot import state, state_b, state_c, state_d, bot_thread
 from config import PORT
 from analytics import analytics_bp
@@ -16,2079 +16,542 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(auth_bp)
 bot_thread.start()
 
-DASHBOARD = """
-<!DOCTYPE html>
+CSS = """
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;600;700;800&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080c14;--bg2:#0d1320;--bg3:#111929;--bg4:#162033;
+  --b:rgba(255,255,255,.06);--b2:rgba(255,255,255,.10);
+  --t:#e8edf5;--t2:#6b7a99;--t3:#3d4f6e;
+  --g:#00e5a0;--r:#ff4d6a;--y:#ffc53d;--bl:#4d9eff;--pu:#a855f7;--te:#00d4c8;--or:#ff7c3f;
+  --sw:220px;
+}
+body{background:var(--bg);color:var(--t);font-family:'DM Mono',monospace;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* SIDEBAR */
+.sb{width:var(--sw);background:var(--bg2);border-right:1px solid var(--b);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100}
+.sb-logo{padding:18px 16px 14px;border-bottom:1px solid var(--b);display:flex;align-items:center;gap:10px}
+.sb-mark{width:30px;height:30px;background:linear-gradient(135deg,var(--g),var(--bl));border-radius:7px;display:flex;align-items:center;justify-content:center;font-family:'Syne',sans-serif;font-size:13px;font-weight:800;color:#080c14;flex-shrink:0}
+.sb-name{font-family:'Syne',sans-serif;font-weight:700;font-size:14px}
+.sb-sub{font-size:9px;color:var(--t3);letter-spacing:1px}
+.sb-sec{padding:12px 16px 4px;font-size:9px;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase}
+.sb-a{display:flex;align-items:center;gap:9px;padding:8px 16px;font-size:11px;color:var(--t2);text-decoration:none;transition:all .15s;position:relative}
+.sb-a:hover{color:var(--t);background:rgba(255,255,255,.03)}
+.sb-a.on{color:var(--t);background:rgba(255,255,255,.05)}
+.sb-a.on::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--g);border-radius:0 2px 2px 0}
+.sb-strat{display:flex;align-items:center;gap:9px;padding:7px 16px;text-decoration:none;transition:all .15s}
+.sb-strat:hover{background:rgba(255,255,255,.03)}
+.sb-strat.on .sn{font-family:'Syne',sans-serif;font-size:12px;font-weight:700}
+.sn{font-family:'Syne',sans-serif;font-size:12px;font-weight:600;color:var(--t2)}
+.sd{font-size:9px;color:var(--t3)}
+.sb-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0}
+.sb-bot{margin-top:auto;border-top:1px solid var(--b);padding:12px 16px;display:flex;align-items:center;gap:8px}
+.sb-av{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#1a6bcc,var(--pu));display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;font-family:'Syne',sans-serif;flex-shrink:0}
+.sb-un{font-size:11px;color:var(--t)}
+.sb-ro{font-size:9px;color:var(--t3)}
+.sb-lo{margin-left:auto;color:var(--t3);text-decoration:none;font-size:16px;transition:color .15s}
+.sb-lo:hover{color:var(--r)}
+
+/* MAIN */
+.main{margin-left:var(--sw);padding:22px}
+
+/* TOPBAR */
+.tb{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px}
+.tb-title{font-family:'Syne',sans-serif;font-size:19px;font-weight:700}
+.tb-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* BADGE */
+.bx{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-size:10px;font-family:'DM Mono',monospace}
+.bx-paper{background:rgba(255,197,61,.1);color:var(--y);border:1px solid rgba(255,197,61,.2)}
+.bx-live{background:rgba(0,229,160,.1);color:var(--g);border:1px solid rgba(0,229,160,.2)}
+.bx-gray{background:rgba(255,255,255,.05);color:var(--t2);border:1px solid var(--b)}
+.bx-g{background:rgba(0,229,160,.1);color:var(--g);border:1px solid rgba(0,229,160,.2)}
+.bx-r{background:rgba(255,77,106,.1);color:var(--r);border:1px solid rgba(255,77,106,.2)}
+.ld{width:5px;height:5px;border-radius:50%;background:currentColor;animation:bk 2s infinite}
+@keyframes bk{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* STATS */
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+.sc{background:var(--bg2);border:1px solid var(--b);border-radius:11px;padding:14px;position:relative;overflow:hidden;transition:border-color .2s}
+.sc:hover{border-color:var(--b2)}
+.sc::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent)}
+.sl{font-size:9px;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:7px}
+.sv{font-family:'Syne',sans-serif;font-size:21px;font-weight:700;line-height:1;margin-bottom:3px}
+.ss{font-size:9px;color:var(--t3)}
+.sv.g{color:var(--g)}.sv.r{color:var(--r)}.sv.y{color:var(--y)}.sv.bl{color:var(--bl)}.sv.te{color:var(--te)}.sv.or{color:var(--or)}.sv.pu{color:var(--pu)}
+
+/* RSI */
+.rsi-row{display:flex;justify-content:space-between;font-size:10px;color:var(--t3);margin-bottom:3px}
+.rsi-tr{height:3px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:16px}
+.rsi-fi{height:100%;border-radius:2px;transition:width .5s ease}
+
+/* MID ROW */
+.mr{display:grid;grid-template-columns:1fr 290px;gap:10px;margin-bottom:16px}
+
+/* CARD */
+.cd{background:var(--bg2);border:1px solid var(--b);border-radius:11px;overflow:hidden}
+.cd-hd{padding:12px 14px;border-bottom:1px solid var(--b);display:flex;align-items:center;justify-content:space-between}
+.cd-tt{font-size:9px;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase}
+.cd-bd{padding:14px}
+
+/* SIGNAL */
+.sig-bx{padding:14px}
+.sig-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;margin-bottom:10px}
+.sig-lo{background:rgba(0,229,160,.1);color:var(--g);border:1px solid rgba(0,229,160,.2)}
+.sig-sh{background:rgba(255,77,106,.1);color:var(--r);border:1px solid rgba(255,77,106,.2)}
+.sig-wt{background:rgba(255,255,255,.04);color:var(--t2);border:1px solid var(--b)}
+.sig-dt{font-size:11px;color:var(--t2);line-height:1.6}
+.sig-tm{font-size:10px;color:var(--t3);margin-top:5px}
+
+/* BOX */
+.box-g{display:flex;flex-direction:column;gap:5px}
+.box-r{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:5px}
+.box-pdh{background:rgba(255,77,106,.06);border:1px solid rgba(255,77,106,.15)}
+.box-mid{background:rgba(255,197,61,.06);border:1px solid rgba(255,197,61,.15)}
+.box-pdl{background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.15)}
+.box-lb{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.box-ds{font-size:8px;color:var(--t3);margin-top:1px}
+.box-pr{font-family:'Syne',sans-serif;font-size:13px;font-weight:700}
+
+/* POSITION */
+.pr{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--b);font-size:11px}
+.pr:last-child{border-bottom:none}
+.pk{color:var(--t3)}.pv{color:var(--t);font-weight:500}
+
+/* TRADE TABLE */
+.tt{width:100%;border-collapse:collapse}
+.tt th{font-size:9px;color:var(--t3);text-align:left;padding:8px 14px;border-bottom:1px solid var(--b);letter-spacing:1px;text-transform:uppercase;font-weight:500}
+.tt td{padding:7px 14px;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px}
+.tt tr:last-child td{border-bottom:none}
+.tt tr:hover td{background:rgba(255,255,255,.02)}
+
+/* PILL */
+.pi{display:inline-block;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;font-family:'Syne',sans-serif}
+.pi-lo{background:rgba(0,229,160,.1);color:var(--g)}
+.pi-sh{background:rgba(255,77,106,.1);color:var(--r)}
+.pi-wi{background:rgba(0,229,160,.1);color:var(--g)}
+.pi-ls{background:rgba(255,77,106,.1);color:var(--r)}
+
+/* BOTTOM */
+.br{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:0}
+
+/* MOBILE NAV */
+.mn{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--b);padding:7px 0 max(7px,env(safe-area-inset-bottom));z-index:100}
+.mn-in{display:flex;justify-content:space-around}
+.mn a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9px;color:var(--t3);text-decoration:none;padding:3px 6px;letter-spacing:.5px;transition:color .15s}
+.mn a.on{color:var(--g)}
+
+/* NEWS */
+.nw-sc{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:600}
+.nw-p{background:rgba(0,229,160,.1);color:var(--g)}
+.nw-n{background:rgba(255,77,106,.1);color:var(--r)}
+.nw-z{background:rgba(255,255,255,.05);color:var(--t2)}
+.nw-sm{font-size:11px;color:var(--t2);line-height:1.6;margin-top:7px}
+.nw-hl{font-size:10px;color:var(--t3);padding:4px 0;border-bottom:1px solid var(--b)}
+.nw-hl:last-child{border-bottom:none}
+
+/* COLORS */
+.tg{color:var(--g)}.tr{color:var(--r)}.ty{color:var(--y)}.tbl{color:var(--bl)}.tte{color:var(--te)}.tor{color:var(--or)}.tpu{color:var(--pu)}.td{color:var(--t3)}.tm{color:var(--t2)}
+
+/* RESPONSIVE */
+@media(max-width:1100px){.sg{grid-template-columns:repeat(2,1fr)}.mr{grid-template-columns:1fr}.br{grid-template-columns:1fr}}
+@media(max-width:768px){.sb{display:none}.main{margin-left:0;padding:14px 10px 76px}.sg{gap:8px}.mn{display:block}.tb-title{font-size:16px}}
+@media(max-width:400px){.sv{font-size:17px}}
+"""
+
+def sb(active='a', username='', role=''):
+    strats = [
+        ('a','#4d9eff','A','Daily Box + RSI'),
+        ('b','#a855f7','B','1H Box + 15m RSI'),
+        ('c','#ff7c3f','C','1H Box + Webhook'),
+        ('d','#00d4c8','D','Order Block + FVG'),
+    ]
+    sh = ''
+    for k,c,l,d in strats:
+        on = 'on' if active==k else ''
+        col = f'color:{c}' if active==k else ''
+        sh += f'<a href="/{""if k=="a" else k}" class="sb-strat {on}"><span class="sb-dot" style="background:{c}"></span><span><div class="sn" style="{col}">Strategy {l}</div><div class="sd">{d}</div></span></a>'
+    al = f'<a href="/admin" class="sb-a {"on" if active=="admin" else ""}"><span>🛡</span><span>Admin</span></a>' if role=='admin' else ''
+    ini = username[:2].upper() if username else 'U'
+    return f'''<div class="sb">
+<div class="sb-logo"><div class="sb-mark">N</div><div><div class="sb-name">NRM Bot</div><div class="sb-sub">AUTO TRADING</div></div></div>
+<div class="sb-sec">Strategies</div>{sh}
+<div class="sb-sec">Analytics</div>
+<a href="/analytics" class="sb-a {"on" if active=="analytics" else ""}"><span>📈</span><span>Analytics</span></a>
+<div class="sb-sec">Account</div>
+<a href="/settings" class="sb-a {"on" if active=="settings" else ""}"><span>⚙️</span><span>Settings</span></a>
+{al}
+<div class="sb-bot"><div class="sb-av">{ini}</div><div><div class="sb-un">{username}</div><div class="sb-ro">{role}</div></div><a href="/logout" class="sb-lo" title="Logout">↩</a></div>
+</div>'''
+
+def mn(active='a'):
+    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/d','d','D'),('/analytics','analytics','📈'),('/settings','settings','⚙')]
+    h = '<nav class="mn"><div class="mn-in">'
+    for href,k,l in items:
+        h += f'<a href="{href}" class="{"on" if active==k else ""}">{l}</a>'
+    h += '</div></nav>'
+    return h
+
+TMPL = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NRM Bot</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:       #0a0e1a;
-    --bg2:      #111827;
-    --bg3:      #1a2235;
-    --border:   #1e2d45;
-    --border2:  #243550;
-    --text:     #e2e8f0;
-    --text2:    #94a3b8;
-    --text3:    #475569;
-    --green:    #10b981;
-    --green2:   #059669;
-    --red:      #ef4444;
-    --red2:     #dc2626;
-    --yellow:   #f59e0b;
-    --blue:     #3b82f6;
-    --purple:   #8b5cf6;
-    --glow-g:   0 0 20px rgba(16,185,129,0.15);
-    --glow-r:   0 0 20px rgba(239,68,68,0.15);
-    --glow-y:   0 0 20px rgba(245,158,11,0.15);
-  }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', sans-serif;
-    min-height: 100vh;
-  }
-
-  /* ── LAYOUT ── */
-  .app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; height: 100vh; overflow: hidden; }
-  .main-col { grid-column: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-  .side-col  { grid-column: 2; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
-
-  /* ── TOP BAR ── */
-  .topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 20px;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-  }
-  .topbar-left { display: flex; align-items: center; gap: 12px; }
-  .logo { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
-  .logo span { color: var(--green); }
-  .badge {
-    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
-    letter-spacing: 0.5px; text-transform: uppercase;
-  }
-  .badge-paper  { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-  .badge-live   { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
-  .badge-green  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
-  .badge-red    { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
-  .badge-gray   { background: rgba(71,85,105,0.3);   color: var(--text2);  border: 1px solid var(--border); }
-  .topbar-right { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text3); }
-  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-
-  /* ── CHART AREA ── */
-  .chart-wrap {
-    flex: 1;
-    background: var(--bg);
-    height: calc(100vh - 100px);
-    min-height: 400px;
-    position: relative;
-    overflow: hidden;
-  }
-  .chart-wrap > div,
-  .chart-wrap .tradingview-widget-container,
-  .chart-wrap .tradingview-widget-container__widget {
-    height: 100% !important;
-    width: 100% !important;
-  }
-  .chart-wrap iframe {
-    height: 100% !important;
-    width: 100% !important;
-    border: none !important;
-  }
-  .chart-toolbar {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 16px;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .tf-btn {
-    font-size: 11px; font-weight: 500; padding: 4px 10px;
-    border-radius: 6px; cursor: pointer; border: 1px solid var(--border);
-    background: transparent; color: var(--text2);
-    transition: all 0.15s;
-  }
-  .tf-btn:hover, .tf-btn.active {
-    background: var(--blue); color: white; border-color: var(--blue);
-  }
-  .chart-label { font-size: 11px; color: var(--text3); margin-left: auto; }
-  #tv-chart { width: 100%; height: 100%; }
-
-  /* ── SIDE PANEL ── */
-  .side-section { padding: 16px; border-bottom: 1px solid var(--border); }
-  .side-title {
-    font-size: 10px; font-weight: 600; color: var(--text3);
-    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
-  }
-
-  /* ── PRICE HEADER ── */
-  .price-display { padding: 16px; border-bottom: 1px solid var(--border); }
-  .price-symbol { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
-  .price-main { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
-  .price-change { font-size: 12px; margin-top: 2px; }
-
-  /* ── STATS GRID ── */
-  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .stat-card {
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 12px;
-  }
-  .stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-  .stat-value { font-size: 16px; font-weight: 600; }
-
-  /* ── SIGNAL CARD ── */
-  .signal-card {
-    border-radius: 10px; padding: 14px;
-    border: 1px solid var(--border);
-    background: var(--bg3);
-  }
-  .signal-type {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: 13px; font-weight: 700; padding: 5px 14px;
-    border-radius: 8px; margin-bottom: 10px;
-  }
-  .signal-long  { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
-  .signal-short { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
-  .signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2); border: 1px solid var(--border); }
-  .signal-text  { font-size: 11px; color: var(--text2); line-height: 1.6; }
-
-  /* ── BOX LEVELS ── */
-  .box-levels { display: flex; flex-direction: column; gap: 6px; }
-  .level-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 8px 12px; border-radius: 8px;
-  }
-  .level-pdh { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.2); }
-  .level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
-  .level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
-  .level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-  .level-desc { font-size: 9px; opacity: 0.6; margin-top: 1px; }
-  .level-price { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-
-  /* ── POSITION CARD ── */
-  .pos-card {
-    background: var(--bg3); border-radius: 10px; padding: 14px;
-    border: 1px solid rgba(245,158,11,0.3);
-  }
-  .pos-row {
-    display: flex; justify-content: space-between;
-    padding: 6px 0; border-bottom: 1px solid var(--border);
-    font-size: 12px;
-  }
-  .pos-row:last-child { border-bottom: none; }
-  .pos-key { color: var(--text2); }
-
-  /* ── RSI BAR ── */
-  .rsi-wrap { margin-top: 8px; }
-  .rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
-  .rsi-bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
-
-  /* ── NEWS ── */
-  .news-score-badge {
-    display: inline-block; padding: 2px 10px; border-radius: 20px;
-    font-size: 11px; font-weight: 600; margin-left: 6px;
-  }
-  .news-summary { font-size: 11px; color: var(--text2); margin-top: 6px; line-height: 1.5; }
-  .news-hl { font-size: 10px; color: var(--text3); padding: 4px 0; border-bottom: 1px solid var(--border); }
-
-  /* ── TRADE TABLE ── */
-  .trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  .trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 500; }
-  .trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
-  .pill {
-    display: inline-block; padding: 2px 7px; border-radius: 4px;
-    font-size: 9px; font-weight: 600; text-transform: uppercase;
-  }
-  .pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
-  .pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
-  .pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
-  .pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
-  .pill-div   { background: rgba(245,158,11,0.15); color: var(--yellow);}
-
-  /* ── ERRORS ── */
-  .error-item { font-size: 10px; color: var(--red); padding: 3px 0; }
-
-  /* ── BOTTOM BAR ── */
-  .bottombar {
-    padding: 10px 20px;
-    background: var(--bg2); border-top: 1px solid var(--border);
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 10px; color: var(--text3);
-  }
-
-  /* ── MOBILE ── */
-  @media (max-width: 900px) {
-    .app {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto auto;
-    }
-    .main-col { grid-column: 1; grid-row: 1; }
-    .side-col {
-      grid-column: 1; grid-row: 2;
-      border-left: none;
-      border-top: 1px solid var(--border);
-      max-height: none;
-    }
-    .chart-wrap {
-      height: 55vw;
-      min-height: 280px;
-      max-height: 420px;
-    }
-    .stats-grid { grid-template-columns: 1fr 1fr; }
-    .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
-    .logo { font-size: 14px; }
-    .price-main { font-size: 22px; }
-  }
-  @media (max-width: 480px) {
-    .chart-wrap { height: 60vw; min-height: 240px; }
-    .tf-btn { padding: 3px 7px; font-size: 10px; }
-    .side-section { padding: 12px; }
-  }
-
-  .divider { width: 1px; height: 16px; background: var(--border); }
-  .text-green { color: var(--green); }
-  .text-red   { color: var(--red);   }
-  .text-yellow{ color: var(--yellow);}
-  .text-blue  { color: var(--blue);  }
-  .text-gray  { color: var(--text2); }
-  .text-dim   { color: var(--text3); }
-</style>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>NRM Bot — Strategy {{ sl }}</title>
+<style>{{ css }}</style>
 </head>
 <body>
+{{ sidebar|safe }}
+<div class="main">
 
-<div class="app">
-
-  <!-- ══ MAIN COLUMN ══ -->
-  <div class="main-col">
-
-    <!-- TOP BAR -->
-    <div class="topbar">
-      <div class="topbar-left">
-        <div class="logo">NRM <span>Bot</span></div>
-        <span class="badge {{ 'badge-paper' if mode == 'PAPER' else 'badge-live' }}">{{ mode }}</span>
-        <span class="badge badge-gray">BTC/USDT PERP</span>
-        <span class="badge badge-gray">BITGET</span>
-        {% if position %}
-        <span class="badge {{ 'badge-green' if position.type == 'LONG' else 'badge-red' }}">
-          {{ position.type }} OPEN
-        </span>
-        {% endif %}
-      </div>
-      <div class="topbar-right">
-        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.25);color:#60a5fa;border:1px solid rgba(59,130,246,0.5);text-decoration:none;font-weight:600;">A</a>
-        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
-        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
-        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
-        <a href="/analytics" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);text-decoration:none;">📊</a>
-        <div class="pulse"></div>
-        <span>LIVE</span>
-        <span class="cycle-time" style="margin-left:4px;">{{ last_cycle }}</span>
-      </div>
-    </div>
-
-    <!-- CHART TOOLBAR -->
-    <div class="chart-toolbar">
-      <button class="tf-btn" onclick="setTF('1')">1m</button>
-      <button class="tf-btn" onclick="setTF('5')">5m</button>
-      <button class="tf-btn" onclick="setTF('15')">15m</button>
-      <button class="tf-btn active" onclick="setTF('60')" id="tf-60">1H</button>
-      <button class="tf-btn" onclick="setTF('240')">4H</button>
-      <button class="tf-btn" onclick="setTF('D')">1D</button>
-      <span class="chart-label">powered by TradingView</span>
-    </div>
-
-    <!-- TRADINGVIEW CHART -->
-    <div class="chart-wrap">
-      <div class="tradingview-widget-container" id="tv-chart" style="height:100%;width:100%;">
-        <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%;"></div>
-        <div class="tradingview-widget-copyright" style="display:none;"></div>
-      </div>
-    </div>
-
-    <!-- BOTTOM BAR -->
-    <div class="bottombar">
-      <span>⚠ PAPER TRADING · NO REAL MONEY · EDUCATIONAL USE ONLY</span>
-      <span>Auto-refresh 20s</span>
-    </div>
-
+<div class="tb">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="tb-title">Strategy {{ sl }}</div>
+    <span class="bx {{ 'bx-paper' if mode=='PAPER' else 'bx-live' }}"><span class="ld"></span>{{ mode }}</span>
+    {% if position %}<span class="bx {{ 'bx-g' if position.type=='LONG' else 'bx-r' }}">{{ position.type }} OPEN</span>{% endif %}
   </div>
+  <div class="tb-r">
+    <span class="bx bx-gray">BTCUSDT PERP</span>
+    <span class="bx bx-gray">BITGET</span>
+    <span class="bx bx-gray" id="s-cycle">{{ last_cycle }}</span>
+  </div>
+</div>
 
-  <!-- ══ SIDE COLUMN ══ -->
-  <div class="side-col">
+<div class="sg">
+  <div class="sc"><div class="sl">Balance</div><div class="sv {{ sc }}" id="s-bal">${{ "{:,.0f}".format(balance) }}</div><div class="ss">USDT Perpetual</div></div>
+  <div class="sc"><div class="sl">Total P&L</div><div class="sv {{ 'g' if pnl>=0 else 'r' }}" id="s-pnl">{{ '+' if pnl>=0 else '' }}${{ "{:.2f}".format(pnl) }}</div><div class="ss" id="s-pnlp">all time</div></div>
+  <div class="sc"><div class="sl">Win Rate</div><div class="sv y" id="s-wr">{{ wr }}%</div><div class="ss" id="s-wl">{{ wins }}W · {{ losses }}L</div></div>
+  <div class="sc"><div class="sl">BTC Price</div><div class="sv bl" id="s-px">${{ "{:,.0f}".format(current_price) }}</div><div class="ss"><span id="s-rsi" class="{{ 'tr' if rsi>70 else 'tg' if rsi<30 else 'tm' }}">RSI {{ rsi }}</span></div></div>
+</div>
 
-    <!-- PRICE -->
-    <div class="price-display">
-      <div class="price-symbol">BTCUSDT · Perpetual</div>
-      <div class="price-main text-green price-main">
-        ${{ "{:,.2f}".format(current_price) }}
-      </div>
-      <div class="price-change">
-        <span class="badge badge-gray" id="rsi-badge">RSI <span class="rsi-val">{{ rsi }}</span></span>
-        <span class="badge badge-paper" id="div-badge" style="margin-left:4px;display:{{ 'inline-block' if divergence else 'none' }};">📊 Divergence!</span>
-      </div>
-    </div>
+<div class="rsi-row"><span>RSI (14)</span><span id="s-rsiv">{{ rsi }}</span></div>
+<div class="rsi-tr"><div class="rsi-fi" id="s-rsif" style="width:{{ rsi }}%;background:{{ '#ff4d6a' if rsi>70 else '#00e5a0' if rsi<30 else '#4d9eff' }}"></div></div>
 
-    <!-- STATS -->
-    <div class="side-section">
-      <div class="side-title">Performance</div>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Balance</div>
-          <div class="stat-value text-green balance-val">${{ "{:,.0f}".format(balance) }}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Total P&L</div>
-          <div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }} pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Win Rate</div>
-          <div class="stat-value text-yellow wr-val">{{ win_rate }}%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">W / L</div>
-          <div class="stat-value text-gray wl-val">{{ wins }}W · {{ losses }}L</div>
-        </div>
-      </div>
-
-      <!-- RSI Bar -->
-      <div class="rsi-wrap">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:10px;">
-          <span>RSI (14)</span><span>{{ rsi }}</span>
-        </div>
-        <div class="rsi-bar-bg">
-          <div class="rsi-bar-fill" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:2px;">
-          <span>0</span><span>30</span><span>70</span><span>100</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- SIGNAL -->
-    <div class="side-section">
-      <div class="side-title">Current Signal</div>
-      <div class="signal-card">
-        {% if 'LONG' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
-          <div class="signal-type signal-long">▲ LONG</div>
-        {% elif 'SHORT' in signal and 'block' not in signal.lower() and 'HOLDING' not in signal %}
-          <div class="signal-type signal-short">▼ SHORT</div>
-        {% elif 'HOLDING' in signal %}
-          <div class="signal-type signal-wait">◆ {{ position.type if position else 'HOLDING' }}</div>
-        {% else %}
-          <div class="signal-type signal-wait">◌ WAIT</div>
-        {% endif %}
-        <div class="signal-text">{{ signal }}</div>
-        {% if signal_time %}
-        <div style="font-size:10px;color:var(--text3);margin-top:6px;">{{ signal_time }}</div>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- PREVIOUS DAY BOX -->
-    {% if box %}
-    <div class="side-section">
-      <div class="side-title">Previous Day Box · {{ box.date }}</div>
-      <div class="box-levels">
-        <div class="level-row level-pdh">
-          <div>
-            <div class="level-name text-red">PDH · Short Zone</div>
-            <div class="level-desc">RSI > 70 → Sell</div>
-          </div>
-          <div class="level-price text-red">${{ "{:,.2f}".format(box.high) }}</div>
-        </div>
-        <div class="level-row level-mid">
-          <div>
-            <div class="level-name text-yellow">MID · Take Profit</div>
-            <div class="level-desc">TP for both setups</div>
-          </div>
-          <div class="level-price text-yellow">${{ "{:,.2f}".format(box.mid) }}</div>
-        </div>
-        <div class="level-row level-pdl">
-          <div>
-            <div class="level-name text-green">PDL · Long Zone</div>
-            <div class="level-desc">RSI < 30 → Buy</div>
-          </div>
-          <div class="level-price text-green">${{ "{:,.2f}".format(box.low) }}</div>
-        </div>
-      </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;gap:12px;">
-        <span>Size: ${{ "{:,.0f}".format(box.size) }}</span>
-        <span>R/R: 1:2</span>
-        <span>Risk: 2% (4% w/ div)</span>
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- OPEN POSITION -->
-    {% if position %}
-    <div class="side-section">
-      <div class="side-title">Open Position</div>
-      <div class="pos-card">
-        <div class="pos-row">
-          <span class="pos-key">Type</span>
-          <span class="pill {{ 'pill-long' if position.type == 'LONG' else 'pill-short' }}">
-            {{ position.type }}
-          </span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Entry</span>
-          <span>${{ "{:,.2f}".format(position.entry) }}</span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Take Profit</span>
-          <span class="text-green">${{ "{:,.2f}".format(position.tp) }}</span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Stop Loss</span>
-          <span class="text-red">${{ "{:,.2f}".format(position.sl) }}</span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Size (BTC)</span>
-          <span>{{ position.qty }}</span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Divergence</span>
-          <span>{% if position.get('has_divergence') %}<span class="pill pill-div">🔥 DOUBLE</span>{% else %}Normal{% endif %}</span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">AI Score</span>
-          <span class="{{ 'text-green' if position.news_score > 0 else 'text-red' if position.news_score < 0 else 'text-gray' }}">
-            {{ position.news_score }}
-          </span>
-        </div>
-        <div class="pos-row">
-          <span class="pos-key">Opened</span>
-          <span class="text-dim">{{ position.time }}</span>
-        </div>
-        {% if position.news_summary %}
-        <div style="margin-top:8px;font-size:10px;color:var(--text2);line-height:1.5;">
-          📰 {{ position.news_summary[:100] }}
-        </div>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- AI NEWS -->
-    <div class="side-section">
-      <div class="side-title">
-        AI News Analysis
-        <span class="news-score-badge {{ 'badge-green' if news_score > 0 else 'badge-red' if news_score < 0 else 'badge-gray' }}">
-          Score: {{ news_score }}
-        </span>
-      </div>
-      {% if news_summary %}
-      <div class="news-summary">{{ news_summary }}</div>
+<div class="mr">
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">Current Signal</div>{% if sl in ['C','D'] %}<span class="bx bx-gray">⚡ TradingView</span>{% endif %}</div>
+    <div class="sig-bx">
+      {% if 'LONG' in signal and 'HOLDING' not in signal and 'block' not in signal.lower() %}
+        <div id="sig-b" class="sig-badge sig-lo">▲ LONG</div>
+      {% elif 'SHORT' in signal and 'HOLDING' not in signal and 'block' not in signal.lower() %}
+        <div id="sig-b" class="sig-badge sig-sh">▼ SHORT</div>
+      {% elif 'HOLDING' in signal %}
+        <div id="sig-b" class="sig-badge sig-wt">◆ HOLDING</div>
+      {% else %}
+        <div id="sig-b" class="sig-badge sig-wt">◌ WAIT</div>
       {% endif %}
-      {% for h in headlines[:6] %}
-      <div class="news-hl">• {{ h }}</div>
-      {% endfor %}
+      <div id="sig-t" class="sig-dt">{{ signal }}</div>
+      <div id="sig-tm" class="sig-tm">{{ signal_time }}</div>
     </div>
-
-    <!-- ERRORS -->
-    {% if errors %}
-    <div class="side-section">
-      <div class="side-title" style="color:var(--red);">Recent Errors</div>
-      {% for e in errors[-3:] %}
-      <div class="error-item">{{ e }}</div>
-      {% endfor %}
+    {% if ns is defined %}
+    <div style="padding:0 14px 10px;display:flex;align-items:center;gap:8px">
+      <span class="td" style="font-size:10px">AI NEWS</span>
+      <span id="s-ns" class="nw-sc {{ 'nw-p' if ns>0 else 'nw-n' if ns<0 else 'nw-z' }}">Score: {{ ns }}</span>
     </div>
     {% endif %}
+  </div>
 
-    <!-- TRADE HISTORY -->
+  {% if box %}
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">{{ 'Daily Box' if sl=='A' else '1H Box' }} · {{ box.get('date', box.get('time','')) }}</div></div>
+    <div class="cd-bd" style="padding-top:8px">
+      <div class="box-g">
+        <div class="box-r box-pdh"><div><div class="box-lb tr">PDH · Short</div><div class="box-ds">RSI &gt; 70 → Sell</div></div><div class="box-pr tr">${{ "{:,.2f}".format(box.high) }}</div></div>
+        <div class="box-r box-mid"><div><div class="box-lb ty">MID · TP</div><div class="box-ds">Take Profit</div></div><div class="box-pr ty">${{ "{:,.2f}".format(box.mid) }}</div></div>
+        <div class="box-r box-pdl"><div><div class="box-lb tg">PDL · Long</div><div class="box-ds">RSI &lt; 30 → Buy</div></div><div class="box-pr tg">${{ "{:,.2f}".format(box.low) }}</div></div>
+      </div>
+      <div style="margin-top:8px;font-size:10px;color:var(--t3);display:flex;gap:10px">
+        <span>Size: ${{ "{:,.0f}".format(box.size) }}</span><span>R/R 1:2</span><span>Risk 2%</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">Signal Source</div></div>
+    <div style="padding:26px 14px;text-align:center">
+      <div style="font-size:26px;margin-bottom:6px">⚡</div>
+      <div style="font-size:11px;color:var(--t2)">Waiting for<br>TradingView webhook</div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="br">
+  {% if position %}
+  <div class="cd" id="pos-s">
+    <div class="cd-hd"><div class="cd-tt">Open Position</div><span class="pi {{ 'pi-lo' if position.type=='LONG' else 'pi-sh' }}">{{ position.type }}</span></div>
+    <div>
+      <div class="pr"><span class="pk">Entry</span><span class="pv">${{ "{:,.2f}".format(position.entry) }}</span></div>
+      {% if position.tp is defined %}<div class="pr"><span class="pk">Take Profit</span><span class="pv tg">${{ "{:,.2f}".format(position.tp) }}</span></div>{% endif %}
+      {% if position.tp1 is defined %}<div class="pr"><span class="pk">TP1 (2:1)</span><span class="pv tg">${{ "{:,.2f}".format(position.tp1) }}</span></div><div class="pr"><span class="pk">TP2 (3:1)</span><span class="pv tte">${{ "{:,.2f}".format(position.tp2) }}</span></div>{% endif %}
+      <div class="pr"><span class="pk">Stop Loss</span><span class="pv tr">${{ "{:,.2f}".format(position.sl) }}</span></div>
+      <div class="pr"><span class="pk">Size (BTC)</span><span class="pv">{{ position.qty }}</span></div>
+      <div class="pr"><span class="pk">Opened</span><span class="pv td">{{ position.time }}</span></div>
+      {% if position.has_divergence %}<div class="pr"><span class="pk">Divergence</span><span class="pv ty">🔥 DOUBLE</span></div>{% endif %}
+      {% if position.has_confluence %}<div class="pr"><span class="pk">Confluence</span><span class="pv tte">🔥 Strong</span></div>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="cd"><div style="padding:26px 14px;text-align:center;color:var(--t3);font-size:11px">No open position</div></div>
+  {% endif %}
+
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">Trade History</div>{% if trades %}<span class="bx bx-gray">{{ trades|length }} trades</span>{% endif %}</div>
     {% if trades %}
-    <div class="side-section">
-      <div class="side-title">Trade History</div>
-      <table class="trade-table">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Type</th>
-            <th>P&L</th>
-            <th>Result</th>
-            <th>Div</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for t in trades[-15:]|reverse %}
-          <tr>
-            <td class="text-dim">{{ t.time[5:16] }}</td>
-            <td><span class="pill {{ 'pill-long' if t.type == 'LONG' else 'pill-short' }}">{{ t.type }}</span></td>
-            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">
-              {{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}
-            </td>
-            <td><span class="pill {{ 'pill-win' if t.result == 'WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
-            <td>{% if t.get('divergence') %}<span class="text-yellow">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <table class="tt">
+      <thead><tr><th>Time</th><th>Type</th><th>P&L</th><th>Result</th></tr></thead>
+      <tbody id="tb">
+        {% for t in trades[-15:]|reverse %}
+        <tr>
+          <td class="td">{{ t.time[5:16] if t.time else '—' }}</td>
+          <td><span class="pi {{ 'pi-lo' if t.type=='LONG' else 'pi-sh' }}">{{ t.type }}</span></td>
+          <td class="{{ 'tg' if t.pnl>=0 else 'tr' }}">{{ '+' if t.pnl>=0 else '' }}${{ "{:.1f}".format(t.pnl) }}</td>
+          <td><span class="pi {{ 'pi-wi' if t.result=='WIN' else 'pi-ls' }}">{{ t.result }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div style="padding:26px 14px;text-align:center;color:var(--t3);font-size:11px">No trades yet</div>
     {% endif %}
+  </div>
+</div>
 
-  </div><!-- end side-col -->
-</div><!-- end app -->
+{% if nsm is defined and nsm %}
+<div class="cd" style="margin-top:10px">
+  <div class="cd-hd"><div class="cd-tt">AI News Analysis</div><span id="s-ns2" class="nw-sc {{ 'nw-p' if ns>0 else 'nw-n' if ns<0 else 'nw-z' }}">Score: {{ ns }}</span></div>
+  <div class="cd-bd"><div class="nw-sm" id="nw-sm">{{ nsm }}</div><div style="margin-top:8px" id="nw-hl">{% for h in hl[:5] %}<div class="nw-hl">• {{ h }}</div>{% endfor %}</div></div>
+</div>
+{% endif %}
 
-<!-- TRADINGVIEW WIDGET SCRIPT -->
+</div>
+{{ mobile_nav|safe }}
+
 <script>
-let currentTF = '60';
-
-function setTF(tf) {
-  currentTF = tf;
-  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
-  loadChart(tf);
-}
-
-function loadChart(interval) {
-  const container = document.getElementById('tv-chart');
-  container.innerHTML = '';
-
-  const wrapper = document.createElement('div');
-  wrapper.className = 'tradingview-widget-container';
-  wrapper.style.cssText = 'height:100%;width:100%;';
-
-  const widget = document.createElement('div');
-  widget.className = 'tradingview-widget-container__widget';
-  widget.style.cssText = 'height:100%;width:100%;';
-  wrapper.appendChild(widget);
-
-  const script = document.createElement('script');
-  script.type = 'text/javascript';
-  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-  script.async = true;
-  script.innerHTML = JSON.stringify({
-    "autosize": true,
-    "symbol": "BITGET:BTCUSDT.P",
-    "interval": interval,
-    "timezone": "Etc/UTC",
-    "theme": "dark",
-    "style": "1",
-    "locale": "en",
-    "backgroundColor": "#0a0e1a",
-    "gridColor": "rgba(30,45,69,0.3)",
-    "hide_top_toolbar": false,
-    "hide_legend": false,
-    "hide_side_toolbar": false,
-    "allow_symbol_change": false,
-    "save_image": false,
-    "withdateranges": true,
-    "studies": [
-      "RSI@tv-basicstudies",
-      "VWAP@tv-basicstudies"
-    ],
-    "support_host": "https://www.tradingview.com"
-  });
-  wrapper.appendChild(script);
-  container.appendChild(wrapper);
-}
-
-// Load chart on page ready
-loadChart('60');
-
-// ── LIVE DATA UPDATE via fetch (no page reload) ─────────────────
-function fmt(n, dec=2) {
-  return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:dec, maximumFractionDigits:dec});
-}
-
-function renderPanel(s) {
-  const wins  = s.wins   || 0;
-  const losses= s.losses || 0;
-  const total = wins + losses;
-  const wr    = total > 0 ? Math.round(wins/total*100) : 0;
-  const rsi   = s.current_rsi || 50;
-  const price = s.current_price || 0;
-  const box   = s.box;
-  const pos   = s.position;
-
-  // ── Price ──
-  document.getElementById('price-val').textContent  = fmt(price);
-  document.getElementById('cycle-val').textContent  = s.last_cycle || '';
-
-  // ── RSI badge ──
-  const rsiBadge = document.getElementById('rsi-badge');
-  rsiBadge.textContent = 'RSI ' + rsi;
-  rsiBadge.className   = 'badge ' + (rsi > 70 ? 'badge-red' : rsi < 30 ? 'badge-green' : 'badge-gray');
-
-  // ── RSI bar ──
-  const bar = document.getElementById('rsi-bar');
-  bar.style.width      = rsi + '%';
-  bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
-  document.getElementById('rsi-num').textContent = rsi;
-
-  // ── Divergence ──
-  const divBadge = document.getElementById('div-badge');
-  divBadge.style.display = s.last_divergence ? 'inline-block' : 'none';
-
-  // ── Stats ──
-  document.getElementById('bal-val').textContent  = fmt(s.balance, 0);
-  const pnlEl = document.getElementById('pnl-val');
-  pnlEl.textContent  = (s.pnl_total >= 0 ? '+' : '') + fmt(s.pnl_total);
-  pnlEl.className    = 'stat-value pnl-val ' + (s.pnl_total >= 0 ? 'text-green' : 'text-red');
-  document.getElementById('wr-val').textContent   = wr + '%';
-  document.getElementById('wl-val').textContent   = wins + 'W · ' + losses + 'L';
-
-  // ── Signal ──
-  const sigType = document.getElementById('sig-type');
-  const sigText = document.getElementById('sig-text');
-  const sigTime = document.getElementById('sig-time');
-  sigText.textContent = s.last_signal || '';
-  sigTime.textContent = s.last_signal_time || '';
-  const sig = s.last_signal || '';
-  if (sig.includes('LONG') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
-    sigType.textContent  = '▲ LONG';
-    sigType.className    = 'signal-type signal-long';
-  } else if (sig.includes('SHORT') && !sig.toLowerCase().includes('block') && !sig.includes('HOLDING')) {
-    sigType.textContent  = '▼ SHORT';
-    sigType.className    = 'signal-type signal-short';
-  } else if (sig.includes('HOLDING')) {
-    sigType.textContent  = '◆ ' + (pos ? pos.type : 'HOLDING');
-    sigType.className    = 'signal-type signal-wait';
-  } else {
-    sigType.textContent  = '◌ WAIT';
-    sigType.className    = 'signal-type signal-wait';
-  }
-
-  // ── Box ──
-  const boxSec = document.getElementById('box-section');
-  if (box) {
-    boxSec.style.display = 'block';
-    document.getElementById('box-date').textContent = box.date || '';
-    document.getElementById('box-high').textContent = fmt(box.high);
-    document.getElementById('box-mid').textContent  = fmt(box.mid);
-    document.getElementById('box-low').textContent  = fmt(box.low);
-    document.getElementById('box-size').textContent = fmt(box.size, 0);
-  } else {
-    boxSec.style.display = 'none';
-  }
-
-  // ── Open Position ──
-  const posSec = document.getElementById('pos-section');
-  if (pos) {
-    posSec.style.display = 'block';
-    document.getElementById('pos-type').textContent  = pos.type;
-    document.getElementById('pos-type').className    = 'pill ' + (pos.type==='LONG' ? 'pill-long' : 'pill-short');
-    document.getElementById('pos-entry').textContent = fmt(pos.entry);
-    document.getElementById('pos-tp').textContent    = fmt(pos.tp);
-    document.getElementById('pos-sl').textContent    = fmt(pos.sl);
-    document.getElementById('pos-qty').textContent   = pos.qty;
-    document.getElementById('pos-div').innerHTML     = pos.has_divergence
-      ? '<span class="pill pill-div">🔥 DOUBLE</span>' : 'Normal';
-    document.getElementById('pos-score').textContent = pos.news_score || 0;
-    document.getElementById('pos-score').className   =
-      pos.news_score > 0 ? 'text-green' : pos.news_score < 0 ? 'text-red' : 'text-gray';
-    document.getElementById('pos-time').textContent  = pos.time || '';
-    document.getElementById('pos-news').textContent  = pos.news_summary
-      ? '📰 ' + pos.news_summary.substring(0,100) : '';
-    // Live unrealised PnL - only if price is valid
-    if (price > 0) {
-      const unreal = pos.type === 'LONG'
-        ? (price - pos.entry) * pos.qty
-        : (pos.entry - price) * pos.qty;
-      const unrealEl = document.getElementById('pos-unreal');
-      if (unrealEl) {
-        unrealEl.textContent = (unreal >= 0 ? '+' : '-') + fmt(Math.abs(unreal));
-        unrealEl.className   = 'stat-value ' + (unreal >= 0 ? 'text-green' : 'text-red');
-      }
+const AURL='{{ api_url }}';
+function f(n,d=2){return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function el(i){return document.getElementById(i)}
+function upd(){
+  fetch(AURL).then(r=>r.json()).then(s=>{
+    const price=s.current_price||0,rsi=s.current_rsi||50;
+    const w=s.wins||0,l=s.losses||0,tot=w+l,wr=tot>0?Math.round(w/tot*100):0;
+    if(el('s-bal'))el('s-bal').textContent=f(s.balance,0);
+    if(el('s-px'))el('s-px').textContent=f(price,0);
+    if(el('s-wr'))el('s-wr').textContent=wr+'%';
+    if(el('s-wl'))el('s-wl').textContent=w+'W · '+l+'L';
+    if(el('s-cycle'))el('s-cycle').textContent=s.last_cycle||'';
+    const pe=el('s-pnl');
+    if(pe){pe.textContent=(s.pnl_total>=0?'+':'')+f(s.pnl_total);pe.className='sv '+(s.pnl_total>=0?'g':'r')}
+    if(el('s-rsi'))el('s-rsi').textContent='RSI '+rsi;
+    if(el('s-rsiv'))el('s-rsiv').textContent=rsi;
+    const fi=el('s-rsif');
+    if(fi){fi.style.width=rsi+'%';fi.style.background=rsi>70?'#ff4d6a':rsi<30?'#00e5a0':'#4d9eff'}
+    const sig=s.last_signal||'';
+    const sb=el('sig-b'),st=el('sig-t'),stm=el('sig-tm');
+    if(st)st.textContent=sig;
+    if(stm)stm.textContent=s.last_signal_time||'';
+    if(sb){
+      if(sig.includes('LONG')&&!sig.includes('HOLDING')&&!sig.toLowerCase().includes('block')){sb.textContent='▲ LONG';sb.className='sig-badge sig-lo'}
+      else if(sig.includes('SHORT')&&!sig.includes('HOLDING')&&!sig.toLowerCase().includes('block')){sb.textContent='▼ SHORT';sb.className='sig-badge sig-sh'}
+      else if(sig.includes('HOLDING')){sb.textContent='◆ HOLDING';sb.className='sig-badge sig-wt'}
+      else{sb.textContent='◌ WAIT';sb.className='sig-badge sig-wt'}
     }
-  } else {
-    posSec.style.display = 'none';
-  }
-
-  // ── News ──
-  document.getElementById('news-score').textContent  = 'Score: ' + (s.last_news_score || 0);
-  document.getElementById('news-score').className    =
-    'news-score-badge ' + (s.last_news_score > 0 ? 'badge-green' : s.last_news_score < 0 ? 'badge-red' : 'badge-gray');
-  document.getElementById('news-summary').textContent = s.last_news_summary || '';
-  const hlDiv = document.getElementById('news-headlines');
-  if (s.last_news_headlines) {
-    hlDiv.innerHTML = s.last_news_headlines.slice(0,6).map(h =>
-      '<div class="news-hl">• ' + h + '</div>'
-    ).join('');
-  }
-
-  // ── Trade History ──
-  const tradeSec = document.getElementById('trade-section');
-  const tradeBody = document.getElementById('trade-body');
-  if (s.trades && s.trades.length > 0) {
-    tradeSec.style.display = 'block';
-    const rows = [...s.trades].reverse().slice(0,15).map(t =>
-      '<tr>' +
-      '<td class="text-dim">' + (t.time||'').substring(5,16) + '</td>' +
-      '<td><span class="pill ' + (t.type==='LONG'?'pill-long':'pill-short') + '">' + t.type + '</span></td>' +
-      '<td class="' + (t.pnl>=0?'text-green':'text-red') + '">' + (t.pnl>=0?'+':'') + fmt(t.pnl,1) + '</td>' +
-      '<td><span class="pill ' + (t.result==='WIN'?'pill-win':'pill-loss') + '">' + t.result + '</span></td>' +
-      '<td>' + (t.divergence ? '<span class="text-yellow">🔥</span>' : '<span class="text-dim">—</span>') + '</td>' +
-      '</tr>'
-    ).join('');
-    tradeBody.innerHTML = rows;
-  } else {
-    tradeSec.style.display = 'none';
-  }
-
-  // ── Errors ──
-  const errSec  = document.getElementById('err-section');
-  const errDiv  = document.getElementById('err-body');
-  if (s.errors && s.errors.length > 0) {
-    errSec.style.display = 'block';
-    errDiv.innerHTML = s.errors.slice(-3).map(e => '<div class="error-item">' + e + '</div>').join('');
-  } else {
-    errSec.style.display = 'none';
-  }
-
-  // ── Pulse flash ──
-  const dot = document.querySelector('.pulse');
-  if (dot) {
-    dot.style.background = '#f59e0b';
-    setTimeout(() => { dot.style.background = '#10b981'; }, 400);
-  }
+    if(s.trades&&s.trades.length>0){
+      const tb=el('tb');
+      if(tb)tb.innerHTML=[...s.trades].reverse().slice(0,15).map(t=>
+        '<tr><td class="td">'+(t.time||'').substring(5,16)+'</td>'+
+        '<td><span class="pi '+(t.type==='LONG'?'pi-lo':'pi-sh')+'">'+t.type+'</span></td>'+
+        '<td class="'+(t.pnl>=0?'tg':'tr')+'">'+(t.pnl>=0?'+':'')+f(t.pnl,1)+'</td>'+
+        '<td><span class="pi '+(t.result==='WIN'?'pi-wi':'pi-ls')+'">'+t.result+'</span></td></tr>'
+      ).join('');
+    }
+  }).catch(e=>console.log(e));
 }
-
-function updateData() {
-  fetch('/api')
-    .then(r => r.json())
-    .then(renderPanel)
-    .catch(err => console.log('Update error:', err));
-}
-
-setInterval(updateData, 10000);
-updateData();
-
-// Smart reload: only reload full page when tab is hidden (user not watching)
-// This refreshes trade history, news etc. without interrupting the user
-let reloadTimer = null;
-
-document.addEventListener('visibilitychange', function() {
-  if (document.hidden) {
-    // Tab hidden: schedule full reload after 60s
-    reloadTimer = setTimeout(() => location.reload(), 60000);
-  } else {
-    // Tab visible again: cancel reload, just fetch fresh data
-    if (reloadTimer) clearTimeout(reloadTimer);
-    updateData();
-  }
-});
+setInterval(upd,10000);upd();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)upd()});
 </script>
-</body>
-</html>
-"""
+</body></html>"""
 
 
-
-# ═══════════════════════════════════════════════════════════════
-# DASHBOARD B — Strategy B (15m entry | 1H box | R/R 2:1)
-# ═══════════════════════════════════════════════════════════════
-DASHBOARD_B = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NRM Bot — Strategy B</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
-  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
-  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6; --purple: #8b5cf6;
-}
-body { background: var(--bg); color: var(--text); font-family: Inter, monospace; }
-.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
-.main-col { display: flex; flex-direction: column; }
-.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.logo { font-size: 15px; font-weight: 700; }
-.logo span { color: var(--purple); }
-.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
-.badge-b { background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); }
-.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-gray { background: rgba(71,85,105,0.3); color: var(--text2); border: 1px solid var(--border); }
-.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
-.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--purple); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); transition: all 0.15s; }
-.tf-btn.active { background: var(--purple); color: white; border-color: var(--purple); }
-.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
-.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
-.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
-.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
-.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
-.price-main { font-size: 28px; font-weight: 700; color: var(--green); }
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
-.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-.stat-value { font-size: 16px; font-weight: 600; }
-.signal-card { border-radius: 10px; padding: 14px; border: 1px solid var(--border); background: var(--bg3); }
-.signal-type { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 5px 14px; border-radius: 8px; margin-bottom: 10px; }
-.signal-long  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
-.signal-short { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
-.signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2);  border: 1px solid var(--border); }
-.box-levels { display: flex; flex-direction: column; gap: 6px; }
-.level-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 8px; }
-.level-pdh { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
-.level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
-.level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
-.level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; }
-.level-price { font-size: 14px; font-weight: 700; }
-.pos-card { background: var(--bg3); border-radius: 10px; padding: 14px; border: 1px solid rgba(139,92,246,0.3); }
-.pos-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-.pos-row:last-child { border-bottom: none; }
-.trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-.trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
-.pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 600; }
-.pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
-.pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
-.nav-link { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 11px; background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); text-decoration: none; }
-.nav-link.active-a { background: rgba(59,130,246,0.15); color: var(--blue); border-color: rgba(59,130,246,0.3); }
-.bottombar { padding: 10px 20px; background: var(--bg2); border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 10px; color: var(--text3); }
-.text-green { color: var(--green); } .text-red { color: var(--red); } .text-yellow { color: var(--yellow); } .text-gray { color: var(--text2); } .text-dim { color: var(--text3); } .text-purple { color: var(--purple); }
-.rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
-.rsi-bar-fill { height: 100%; border-radius: 3px; }
-@media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; }
-  .side-col { border-left: none; border-top: 1px solid var(--border); }
-  .chart-wrap { height: 55vw; min-height: 280px; }
-}
-</style>
-</head>
-<body>
-<div class="app">
-  <div class="main-col">
-    <div class="topbar">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="logo">NRM <span>Bot</span></div>
-        <span class="badge badge-b">STRATEGY B</span>
-        <span class="badge badge-paper">PAPER</span>
-        <span class="badge badge-gray">15m · 1H BOX</span>
-        <span class="badge badge-gray">R/R 2:1</span>
-        {% if position %}<span class="badge" style="background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);">{{ position.type }} OPEN</span>{% endif %}
-      </div>
-      <div class="topbar-right">
-        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
-        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.25);color:#a855f7;border:1px solid rgba(139,92,246,0.5);text-decoration:none;font-weight:600;">B</a>
-        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
-        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
-        <div class="pulse"></div>
-        <span class="cycle-time">{{ last_cycle }}</span>
-      </div>
-    </div>
-    <div class="chart-toolbar">
-      <button class="tf-btn" onclick="setTF('1')">1m</button>
-      <button class="tf-btn active" onclick="setTF('15')" id="tf-15">15m</button>
-      <button class="tf-btn" onclick="setTF('60')">1H</button>
-      <button class="tf-btn" onclick="setTF('240')">4H</button>
-      <span style="font-size:11px;color:#475569;margin-left:auto;">powered by TradingView</span>
-    </div>
-    <div class="chart-wrap"><div id="tv-chart"></div></div>
-    <div class="bottombar">
-      <span>⚠ PAPER TRADING · STRATEGY B · 15m ENTRY · 1H BOX · R/R 2:1</span>
-      <span>Auto-refresh 10s</span>
-    </div>
-  </div>
-
-  <div class="side-col">
-    <div class="price-display">
-      <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">BTCUSDT · 15m</div>
-      <div class="price-main" id="price-val">${{ "{:,.2f}".format(current_price) }}</div>
-      <div style="margin-top:6px;">
-        <span class="badge {{ 'badge-paper' if rsi < 30 else 'badge-gray' }}" id="rsi-badge" style="{{ 'background:rgba(239,68,68,0.15);color:#ef4444;border-color:#ef4444' if rsi > 70 else '' }}">RSI {{ rsi }}</span>
-        {% if divergence %}<span class="badge badge-b" style="margin-left:4px;" id="div-badge">📊 Div!</span>{% else %}<span id="div-badge" style="display:none;"></span>{% endif %}
-      </div>
-    </div>
-
-    <div class="side-section">
-      <div class="side-title">Performance</div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value text-green" id="bal-val">${{ "{:,.0f}".format(balance) }}</div></div>
-        <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}" id="pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div></div>
-        <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value text-yellow" id="wr-val">{{ win_rate }}%</div></div>
-        <div class="stat-card"><div class="stat-label">W / L</div><div class="stat-value text-gray" id="wl-val">{{ wins }}W · {{ losses }}L</div></div>
-      </div>
-      <div style="margin-top:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);">
-          <span>RSI 15m</span><span id="rsi-num">{{ rsi }}</span>
-        </div>
-        <div class="rsi-bar-bg">
-          <div class="rsi-bar-fill" id="rsi-bar" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="side-section">
-      <div class="side-title">Current Signal</div>
-      <div class="signal-card">
-        <div id="sig-type" class="signal-type signal-wait">◌ WAIT</div>
-        <div id="sig-text" style="font-size:11px;color:var(--text2);">{{ signal }}</div>
-        <div id="sig-time" style="font-size:10px;color:var(--text3);margin-top:4px;">{{ signal_time }}</div>
-      </div>
-    </div>
-
-    {% if box %}
-    <div class="side-section">
-      <div class="side-title">1H Box · {{ box.time }}</div>
-      <div class="box-levels">
-        <div class="level-row level-pdh">
-          <div><div class="level-name text-red">HIGH · Short Zone</div><div style="font-size:9px;opacity:0.6;">RSI > 70 → Sell</div></div>
-          <div class="level-price text-red" id="box-high">${{ "{:,.2f}".format(box.high) }}</div>
-        </div>
-        <div class="level-row level-mid">
-          <div><div class="level-name text-yellow">MID · Take Profit</div><div style="font-size:9px;opacity:0.6;">R/R 2:1</div></div>
-          <div class="level-price text-yellow" id="box-mid">${{ "{:,.2f}".format(box.mid) }}</div>
-        </div>
-        <div class="level-row level-pdl">
-          <div><div class="level-name text-green">LOW · Long Zone</div><div style="font-size:9px;opacity:0.6;">RSI < 30 → Buy</div></div>
-          <div class="level-price text-green" id="box-low">${{ "{:,.2f}".format(box.low) }}</div>
-        </div>
-      </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:8px;">Box size: ${{ "{:,.0f}".format(box.size) }} · SL = TP/2 · R/R 2:1</div>
-    </div>
-    {% endif %}
-
-    {% if position %}
-    <div class="side-section">
-      <div class="side-title">Open Position</div>
-      <div class="pos-card">
-        <div class="pos-row"><span style="color:var(--text2);">Type</span><span class="pill {{ 'pill-long' if position.type=='LONG' else 'pill-short' }}" id="pos-type">{{ position.type }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Entry</span><span id="pos-entry">${{ "{:,.2f}".format(position.entry) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Unrealised</span><span id="pos-unreal" class="text-gray">—</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Take Profit</span><span class="text-green" id="pos-tp">${{ "{:,.2f}".format(position.tp) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Stop Loss</span><span class="text-red" id="pos-sl">${{ "{:,.2f}".format(position.sl) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">R/R</span><span class="text-purple">2:1</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Qty</span><span id="pos-qty">{{ position.qty }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Opened</span><span class="text-dim" id="pos-time">{{ position.time }}</span></div>
-      </div>
-    </div>
-    {% endif %}
-
-    {% if trades %}
-    <div class="side-section">
-      <div class="side-title">Trade History</div>
-      <table class="trade-table">
-        <thead><tr><th>Time</th><th>Type</th><th>P&L</th><th>Result</th><th>Div</th></tr></thead>
-        <tbody id="trade-body">
-          {% for t in trades[-15:]|reverse %}
-          <tr>
-            <td class="text-dim">{{ t.time[5:16] }}</td>
-            <td><span class="pill {{ 'pill-long' if t.type=='LONG' else 'pill-short' }}">{{ t.type }}</span></td>
-            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">{{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}</td>
-            <td><span class="pill {{ 'pill-win' if t.result=='WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
-            <td>{% if t.get('divergence') %}<span style="color:#f59e0b;">🔥</span>{% else %}<span class="text-dim">—</span>{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-  </div>
-</div>
-
-<script>
-let currentTF = '15';
-function setTF(tf) {
-  currentTF = tf;
-  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
-  loadChart(tf);
-}
-function loadChart(interval) {
-  const container = document.getElementById('tv-chart');
-  container.innerHTML = '';
-  const wrapper = document.createElement('div');
-  wrapper.className = 'tradingview-widget-container';
-  wrapper.style.cssText = 'height:100%;width:100%;';
-  const widget = document.createElement('div');
-  widget.className = 'tradingview-widget-container__widget';
-  widget.style.cssText = 'height:100%;width:100%;';
-  wrapper.appendChild(widget);
-  const script = document.createElement('script');
-  script.type = 'text/javascript';
-  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-  script.async = true;
-  script.innerHTML = JSON.stringify({
-    "autosize": true, "symbol": "BITGET:BTCUSDT.P",
-    "interval": interval, "timezone": "Etc/UTC",
-    "theme": "dark", "style": "1", "locale": "en",
-    "backgroundColor": "#0a0e1a", "gridColor": "rgba(30,45,69,0.3)",
-    "studies": ["RSI@tv-basicstudies"],
-    "support_host": "https://www.tradingview.com"
-  });
-  wrapper.appendChild(script);
-  container.appendChild(wrapper);
-}
-loadChart('15');
-
-function updateData() {
-  fetch('/api/b')
-    .then(r => r.json())
-    .then(s => {
-      const price = s.current_price || 0;
-      document.getElementById('price-val').textContent = '$' + price.toLocaleString('en-US', {minimumFractionDigits:2});
-      document.getElementById('cycle-time') && (document.querySelector('.cycle-time').textContent = s.last_cycle || '');
-      const rsi = s.current_rsi || 50;
-      document.getElementById('rsi-num').textContent = rsi;
-      const bar = document.getElementById('rsi-bar');
-      bar.style.width = rsi + '%';
-      bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
-      document.getElementById('bal-val').textContent = '$' + (s.balance||0).toLocaleString('en-US',{minimumFractionDigits:0});
-      const pnl = s.pnl_total || 0;
-      const pnlEl = document.getElementById('pnl-val');
-      pnlEl.textContent = (pnl>=0?'+':'') + '$' + Math.abs(pnl).toFixed(2);
-      pnlEl.className = 'stat-value ' + (pnl>=0?'text-green':'text-red');
-      const w = s.wins||0, l = s.losses||0;
-      document.getElementById('wl-val').textContent = w + 'W · ' + l + 'L';
-      document.getElementById('wr-val').textContent = (w+l>0?Math.round(w/(w+l)*100):0) + '%';
-      const sig = s.last_signal || '';
-      const sigType = document.getElementById('sig-type');
-      document.getElementById('sig-text').textContent = sig;
-      if (sig.includes('LONG') && !sig.includes('HOLDING')) { sigType.textContent = '▲ LONG'; sigType.className = 'signal-type signal-long'; }
-      else if (sig.includes('SHORT') && !sig.includes('HOLDING')) { sigType.textContent = '▼ SHORT'; sigType.className = 'signal-type signal-short'; }
-      else { sigType.textContent = '◌ WAIT'; sigType.className = 'signal-type signal-wait'; }
-      if (s.position) {
-        const pos = s.position;
-        if (price > 0) {
-          const unreal = pos.type === 'LONG' ? (price - pos.entry) * pos.qty : (pos.entry - price) * pos.qty;
-          const unrealEl = document.getElementById('pos-unreal');
-          if (unrealEl) { unrealEl.textContent = (unreal>=0?'+':'') + '$' + Math.abs(unreal).toFixed(2); unrealEl.className = unreal>=0?'text-green':'text-red'; }
-        }
-      }
-    }).catch(e => console.log(e));
-}
-setInterval(updateData, 10000);
-updateData();
-
-document.addEventListener('visibilitychange', function() {
-  if (!document.hidden) updateData();
-});
-</script>
-</body>
-</html>
-"""
+def render_dash(active, api_url, sc, s, extra={}):
+    wins = s.get('wins',0); losses = s.get('losses',0); total = wins+losses
+    username = session.get('username',''); role = session.get('role','user')
+    return render_template_string(TMPL,
+        css=CSS, sidebar=sb(active,username,role), mobile_nav=mn(active),
+        sl=active.upper(), sc=sc, api_url=api_url,
+        mode=s.get('mode','PAPER'),
+        balance=s.get('balance',10000), pnl=s.get('pnl_total',0),
+        wins=wins, losses=losses, wr=round(wins/total*100) if total>0 else 0,
+        rsi=s.get('current_rsi',50),
+        signal=s.get('last_signal','Waiting...'),
+        signal_time=s.get('last_signal_time',''),
+        last_cycle=s.get('last_cycle',''),
+        position=s.get('position'),
+        box=s.get('box'),
+        current_price=s.get('current_price',0),
+        trades=s.get('trades',[]),
+        ns=extra.get('ns',0), nsm=extra.get('nsm',''), hl=extra.get('hl',[]),
+    )
 
 
-
-# ═══════════════════════════════════════════════════════════════
-# DASHBOARD C — Strategy C (TradingView Webhook | 1H box | R/R 2:1)
-# ═══════════════════════════════════════════════════════════════
-DASHBOARD_C = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NRM Bot — Strategy C</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
-  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
-  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
-  --orange: #f97316; --orange2: #ea580c;
-}
-body { background: var(--bg); color: var(--text); font-family: Inter, sans-serif; }
-.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
-.main-col { display: flex; flex-direction: column; }
-.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.logo { font-size: 15px; font-weight: 700; }
-.logo span { color: var(--orange); }
-.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
-.badge-c { background: rgba(249,115,22,0.15); color: var(--orange); border: 1px solid rgba(249,115,22,0.3); }
-.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-gray { background: rgba(71,85,105,0.3); color: var(--text2); border: 1px solid var(--border); }
-.badge-green { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
-.badge-red { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
-.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); }
-.tf-btn.active { background: var(--orange); color: white; border-color: var(--orange); }
-.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
-.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
-.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
-.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
-.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
-.price-main { font-size: 28px; font-weight: 700; color: var(--orange); }
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
-.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-.stat-value { font-size: 16px; font-weight: 600; }
-.signal-card { border-radius: 10px; padding: 14px; border: 1px solid var(--border); background: var(--bg3); }
-.signal-type { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 5px 14px; border-radius: 8px; margin-bottom: 10px; }
-.signal-long  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
-.signal-short { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
-.signal-wait  { background: rgba(71,85,105,0.2);   color: var(--text2);  border: 1px solid var(--border); }
-.webhook-badge { background: rgba(249,115,22,0.15); color: var(--orange); border: 1px solid rgba(249,115,22,0.3); padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; }
-.box-levels { display: flex; flex-direction: column; gap: 6px; }
-.level-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 8px; }
-.level-pdh { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
-.level-mid { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
-.level-pdl { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
-.level-name { font-size: 10px; font-weight: 600; text-transform: uppercase; }
-.level-price { font-size: 14px; font-weight: 700; }
-.pos-card { background: var(--bg3); border-radius: 10px; padding: 14px; border: 1px solid rgba(249,115,22,0.3); }
-.pos-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-.pos-row:last-child { border-bottom: none; }
-.trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.trade-table th { color: var(--text3); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-.trade-table td { padding: 6px 8px; border-bottom: 1px solid rgba(30,45,69,0.5); }
-.pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 600; }
-.pill-long  { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-short { background: rgba(239,68,68,0.15);  color: var(--red);   }
-.pill-win   { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-loss  { background: rgba(239,68,68,0.15);  color: var(--red);   }
-.nav-link { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 11px; text-decoration: none; }
-.nav-a { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
-.nav-b { background: rgba(139,92,246,0.15); color: #a855f7; border: 1px solid rgba(139,92,246,0.3); }
-.nav-c { background: rgba(249,115,22,0.15); color: var(--orange); border: 1px solid rgba(249,115,22,0.3); }
-.bottombar { padding: 10px 20px; background: var(--bg2); border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 10px; color: var(--text3); }
-.text-green { color: var(--green); } .text-red { color: var(--red); } .text-yellow { color: var(--yellow); }
-.text-orange { color: var(--orange); } .text-gray { color: var(--text2); } .text-dim { color: var(--text3); }
-.rsi-bar-bg { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 4px; }
-.rsi-bar-fill { height: 100%; border-radius: 3px; }
-@media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; }
-  .side-col { border-left: none; border-top: 1px solid var(--border); }
-  .chart-wrap { height: 55vw; min-height: 280px; }
-}
-</style>
-</head>
-<body>
-<div class="app">
-  <div class="main-col">
-    <div class="topbar">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="logo">NRM <span>Bot</span></div>
-        <span class="badge badge-c">STRATEGY C</span>
-        <span class="badge badge-paper">PAPER</span>
-        <span class="badge badge-gray">TV WEBHOOK</span>
-        <span class="badge badge-gray">R/R 2:1</span>
-        {% if position %}<span class="badge {{ 'badge-green' if position.type=='LONG' else 'badge-red' }}">{{ position.type }} OPEN</span>{% endif %}
-      </div>
-      <div class="topbar-right">
-        <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
-        <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
-        <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.25);color:#f97316;border:1px solid rgba(249,115,22,0.5);text-decoration:none;font-weight:600;">C</a>
-        <div class="pulse"></div>
-        <span id="cycle-time">{{ last_cycle }}</span>
-      </div>
-    </div>
-    <div class="chart-toolbar">
-      <button class="tf-btn" onclick="setTF('1')">1m</button>
-      <button class="tf-btn active" onclick="setTF('15')">15m</button>
-      <button class="tf-btn" onclick="setTF('60')">1H</button>
-      <button class="tf-btn" onclick="setTF('240')">4H</button>
-      <span style="font-size:11px;color:#475569;margin-left:auto;">powered by TradingView</span>
-    </div>
-    <div class="chart-wrap"><div id="tv-chart"></div></div>
-    <div class="bottombar">
-      <span>⚠ PAPER TRADING · STRATEGY C · TV WEBHOOK · 1H BOX · R/R 2:1</span>
-      <span>Auto-refresh 10s</span>
-    </div>
-  </div>
-
-  <div class="side-col">
-    <div class="price-display">
-      <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">BTCUSDT · 15m</div>
-      <div class="price-main" id="price-val">${{ "{:,.2f}".format(current_price) }}</div>
-      <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
-        <span class="badge badge-gray" id="rsi-badge">RSI {{ rsi }}</span>
-        <span class="webhook-badge">⚡ TradingView</span>
-      </div>
-    </div>
-
-    <div class="side-section">
-      <div class="side-title">Performance</div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value text-orange" id="bal-val">${{ "{:,.0f}".format(balance) }}</div></div>
-        <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value {{ 'text-green' if pnl >= 0 else 'text-red' }}" id="pnl-val">{{ '+' if pnl >= 0 else '' }}${{ "{:.2f}".format(pnl) }}</div></div>
-        <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value text-yellow" id="wr-val">{{ win_rate }}%</div></div>
-        <div class="stat-card"><div class="stat-label">W / L</div><div class="stat-value text-gray" id="wl-val">{{ wins }}W · {{ losses }}L</div></div>
-      </div>
-      <div style="margin-top:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);">
-          <span>RSI 15m</span><span id="rsi-num">{{ rsi }}</span>
-        </div>
-        <div class="rsi-bar-bg">
-          <div class="rsi-bar-fill" id="rsi-bar" style="width:{{ rsi }}%;background:{{ '#ef4444' if rsi > 70 else '#10b981' if rsi < 30 else '#3b82f6' }};"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="side-section">
-      <div class="side-title">Current Signal</div>
-      <div class="signal-card">
-        {% if 'LONG' in signal and 'HOLDING' not in signal %}
-          <div id="sig-type" class="signal-type signal-long">▲ LONG</div>
-        {% elif 'SHORT' in signal and 'HOLDING' not in signal %}
-          <div id="sig-type" class="signal-type signal-short">▼ SHORT</div>
-        {% elif 'HOLDING' in signal %}
-          <div id="sig-type" class="signal-type signal-wait">◆ {{ position.type if position else 'HOLDING' }}</div>
-        {% else %}
-          <div id="sig-type" class="signal-type signal-wait">⚡ WAITING WEBHOOK</div>
-        {% endif %}
-        <div id="sig-text" style="font-size:11px;color:var(--text2);">{{ signal }}</div>
-        <div id="sig-time" style="font-size:10px;color:var(--text3);margin-top:4px;">{{ signal_time }}</div>
-      </div>
-    </div>
-
-    {% if box %}
-    <div class="side-section">
-      <div class="side-title">1H Box</div>
-      <div class="box-levels">
-        <div class="level-row level-pdh">
-          <div><div class="level-name text-red">HIGH · Short Zone</div><div style="font-size:9px;opacity:0.6;">RSI > 70 → Sell</div></div>
-          <div class="level-price text-red">${{ "{:,.2f}".format(box.high) }}</div>
-        </div>
-        <div class="level-row level-mid">
-          <div><div class="level-name text-yellow">MID · Take Profit</div><div style="font-size:9px;opacity:0.6;">R/R 2:1</div></div>
-          <div class="level-price text-yellow">${{ "{:,.2f}".format(box.mid) }}</div>
-        </div>
-        <div class="level-row level-pdl">
-          <div><div class="level-name text-green">LOW · Long Zone</div><div style="font-size:9px;opacity:0.6;">RSI < 30 → Buy</div></div>
-          <div class="level-price text-green">${{ "{:,.2f}".format(box.low) }}</div>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {% if position %}
-    <div class="side-section">
-      <div class="side-title">Open Position</div>
-      <div class="pos-card">
-        <div class="pos-row"><span style="color:var(--text2);">Type</span><span class="pill {{ 'pill-long' if position.type=='LONG' else 'pill-short' }}" id="pos-type">{{ position.type }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Entry</span><span id="pos-entry">${{ "{:,.2f}".format(position.entry) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Unrealised</span><span id="pos-unreal" class="text-gray">—</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Take Profit</span><span class="text-green" id="pos-tp">${{ "{:,.2f}".format(position.tp) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Stop Loss</span><span class="text-red" id="pos-sl">${{ "{:,.2f}".format(position.sl) }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">R/R</span><span class="text-orange">2:1</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Qty</span><span id="pos-qty">{{ position.qty }}</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Source</span><span class="text-orange">⚡ TradingView</span></div>
-        <div class="pos-row"><span style="color:var(--text2);">Opened</span><span class="text-dim" id="pos-time">{{ position.time }}</span></div>
-      </div>
-    </div>
-    {% endif %}
-
-    {% if trades %}
-    <div class="side-section">
-      <div class="side-title">Trade History</div>
-      <table class="trade-table">
-        <thead><tr><th>Time</th><th>Type</th><th>P&L</th><th>Result</th></tr></thead>
-        <tbody id="trade-body">
-          {% for t in trades[-15:]|reverse %}
-          <tr>
-            <td class="text-dim">{{ t.time[5:16] }}</td>
-            <td><span class="pill {{ 'pill-long' if t.type=='LONG' else 'pill-short' }}">{{ t.type }}</span></td>
-            <td class="{{ 'text-green' if t.pnl >= 0 else 'text-red' }}">{{ '+' if t.pnl >= 0 else '' }}${{ "{:.1f}".format(t.pnl) }}</td>
-            <td><span class="pill {{ 'pill-win' if t.result=='WIN' else 'pill-loss' }}">{{ t.result }}</span></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-  </div>
-</div>
-
-<script>
-function setTF(tf) {
-  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
-  loadChart(tf);
-}
-function loadChart(interval) {
-  const c = document.getElementById('tv-chart');
-  c.innerHTML = '';
-  const w = document.createElement('div');
-  w.className = 'tradingview-widget-container';
-  w.style.cssText = 'height:100%;width:100%;';
-  const d = document.createElement('div');
-  d.className = 'tradingview-widget-container__widget';
-  d.style.cssText = 'height:100%;width:100%;';
-  w.appendChild(d);
-  const s = document.createElement('script');
-  s.type = 'text/javascript';
-  s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-  s.async = true;
-  s.innerHTML = JSON.stringify({
-    "autosize": true, "symbol": "BITGET:BTCUSDT.P",
-    "interval": interval, "timezone": "Etc/UTC",
-    "theme": "dark", "style": "1", "locale": "en",
-    "backgroundColor": "#0a0e1a",
-    "studies": ["RSI@tv-basicstudies"],
-    "support_host": "https://www.tradingview.com"
-  });
-  w.appendChild(s);
-  c.appendChild(w);
-}
-loadChart('15');
-
-function updateData() {
-  fetch('/api/c')
-    .then(r => r.json())
-    .then(s => {
-      const price = s.current_price || 0;
-      document.getElementById('price-val').textContent = '$' + price.toLocaleString('en-US',{minimumFractionDigits:2});
-      document.getElementById('cycle-time').textContent = s.last_cycle || '';
-      const rsi = s.current_rsi || 50;
-      document.getElementById('rsi-num').textContent = rsi;
-      document.getElementById('rsi-badge').textContent = 'RSI ' + rsi;
-      const bar = document.getElementById('rsi-bar');
-      bar.style.width = rsi + '%';
-      bar.style.background = rsi > 70 ? '#ef4444' : rsi < 30 ? '#10b981' : '#3b82f6';
-      document.getElementById('bal-val').textContent = '$' + (s.balance||0).toLocaleString('en-US',{minimumFractionDigits:0});
-      const pnl = s.pnl_total || 0;
-      const pnlEl = document.getElementById('pnl-val');
-      pnlEl.textContent = (pnl>=0?'+':'') + '$' + Math.abs(pnl).toFixed(2);
-      pnlEl.className = 'stat-value ' + (pnl>=0?'text-green':'text-red');
-      const w2 = s.wins||0, l = s.losses||0;
-      document.getElementById('wl-val').textContent = w2 + 'W · ' + l + 'L';
-      document.getElementById('wr-val').textContent = (w2+l>0?Math.round(w2/(w2+l)*100):0) + '%';
-      const sig = s.last_signal || '';
-      const sigType = document.getElementById('sig-type');
-      document.getElementById('sig-text').textContent = sig;
-      document.getElementById('sig-time').textContent = s.last_signal_time || '';
-      if (sig.includes('LONG') && !sig.includes('HOLDING')) { sigType.textContent = '▲ LONG'; sigType.className = 'signal-type signal-long'; }
-      else if (sig.includes('SHORT') && !sig.includes('HOLDING')) { sigType.textContent = '▼ SHORT'; sigType.className = 'signal-type signal-short'; }
-      else if (sig.includes('HOLDING')) { sigType.textContent = '◆ HOLDING'; sigType.className = 'signal-type signal-wait'; }
-      else { sigType.textContent = '⚡ WAITING WEBHOOK'; sigType.className = 'signal-type signal-wait'; }
-      if (s.position && price > 0) {
-        const pos = s.position;
-        const unreal = pos.type==='LONG' ? (price-pos.entry)*pos.qty : (pos.entry-price)*pos.qty;
-        const el = document.getElementById('pos-unreal');
-        if (el) { el.textContent = (unreal>=0?'+':'-') + '$' + Math.abs(unreal).toFixed(2); el.className = unreal>=0?'text-green':'text-red'; }
-      }
-    }).catch(e => console.log(e));
-}
-setInterval(updateData, 10000);
-updateData();
-</script>
-</body>
-</html>
-"""
-
-@app.route("/")
+@app.route('/')
 @login_required
 def index():
-    s      = state
-    wins   = s["wins"]
-    losses = s["losses"]
-    total  = wins + losses
-    return render_template_string(
-        DASHBOARD,
-        mode          = s["mode"],
-        balance       = s["balance"],
-        pnl           = s["pnl_total"],
-        wins          = wins,
-        losses        = losses,
-        win_rate      = round(wins / total * 100) if total > 0 else 0,
-        rsi           = s["current_rsi"],
-        divergence    = s.get("last_divergence", False),
-        signal        = s["last_signal"],
-        signal_time   = s["last_signal_time"],
-        last_cycle    = s["last_cycle"],
-        position      = s["position"],
-        box           = s["box"],
-        current_price = s["current_price"],
-        news_score    = s["last_news_score"],
-        news_summary  = s["last_news_summary"],
-        headlines     = s["last_news_headlines"],
-        trades        = s["trades"],
-        errors        = s["errors"],
-    )
+    return render_dash('a','/api','bl', state, {
+        'ns': state.get('last_news_score',0),
+        'nsm': state.get('last_news_summary',''),
+        'hl': state.get('last_news_headlines',[]),
+    })
 
-
-@app.route("/api")
-@login_required
-def api():
-    return jsonify(state)
-
-@app.route("/api/b")
-@login_required
-def api_b():
-    return jsonify(state_b)
-
-@app.route("/api/c")
-@login_required
-def api_c():
-    return jsonify(state_c)
-
-@app.route("/api/d")
-@login_required
-def api_d():
-    return jsonify(state_d)
-
-@app.route("/d")
-@login_required
-def strategy_d():
-    s      = state_d
-    wins   = s.get("wins", 0)
-    losses = s.get("losses", 0)
-    total  = wins + losses
-    return render_template_string(
-        DASHBOARD_D,
-        balance       = s.get("balance", 10000),
-        pnl           = s.get("pnl_total", 0),
-        wins          = wins,
-        losses        = losses,
-        win_rate      = round(wins/total*100) if total > 0 else 0,
-        signal        = s.get("last_signal", "Waiting for TradingView signal..."),
-        signal_time   = s.get("last_signal_time", ""),
-        last_cycle    = s.get("last_cycle", ""),
-        position      = s.get("position"),
-        current_price = s.get("current_price", 0),
-        trades        = s.get("trades", []),
-        errors        = s.get("errors", []),
-    )
-
-@app.route("/c")
-@login_required
-def strategy_c():
-    s      = state_c
-    wins   = s.get("wins", 0)
-    losses = s.get("losses", 0)
-    total  = wins + losses
-    return render_template_string(
-        DASHBOARD_C,
-        balance       = s.get("balance", 10000),
-        pnl           = s.get("pnl_total", 0),
-        wins          = wins,
-        losses        = losses,
-        win_rate      = round(wins/total*100) if total > 0 else 0,
-        rsi           = s.get("current_rsi", 50),
-        divergence    = s.get("last_divergence", False),
-        signal        = s.get("last_signal", "Waiting for TradingView signal..."),
-        signal_time   = s.get("last_signal_time", ""),
-        last_cycle    = s.get("last_cycle", ""),
-        position      = s.get("position"),
-        box           = s.get("box"),
-        current_price = s.get("current_price", 0),
-        trades        = s.get("trades", []),
-        errors        = s.get("errors", []),
-    )
-
-@app.route("/b")
+@app.route('/b')
 @login_required
 def strategy_b():
-    s    = state_b
-    wins = s.get("wins", 0)
-    losses = s.get("losses", 0)
-    total  = wins + losses
-    return render_template_string(
-        DASHBOARD_B,
-        balance       = s.get("balance", 10000),
-        pnl           = s.get("pnl_total", 0),
-        wins          = wins,
-        losses        = losses,
-        win_rate      = round(wins/total*100) if total > 0 else 0,
-        rsi           = s.get("current_rsi", 50),
-        divergence    = s.get("last_divergence", False),
-        signal        = s.get("last_signal", "Starting..."),
-        signal_time   = s.get("last_signal_time", ""),
-        last_cycle    = s.get("last_cycle", ""),
-        position      = s.get("position"),
-        box           = s.get("box"),
-        current_price = state.get("current_price", 0),
-        trades        = s.get("trades", []),
-        errors        = s.get("errors", []),
-    )
+    s = dict(state_b); s['current_price'] = state.get('current_price',0)
+    return render_dash('b','/api/b','pu', s)
+
+@app.route('/c')
+@login_required
+def strategy_c():
+    return render_dash('c','/api/c','or', state_c)
+
+@app.route('/d')
+@login_required
+def strategy_d():
+    s = dict(state_d); s['box'] = None
+    return render_dash('d','/api/d','te', s)
+
+@app.route('/api')
+@login_required
+def api(): return jsonify(state)
+
+@app.route('/api/b')
+@login_required
+def api_b(): return jsonify(state_b)
+
+@app.route('/api/c')
+@login_required
+def api_c(): return jsonify(state_c)
+
+@app.route('/api/d')
+@login_required
+def api_d(): return jsonify(state_d)
 
 
-# =================================================================
-# WEBHOOK ENDPOINTS — TradingView Alerts
-# =================================================================
-
+# ── WEBHOOKS (no login) ──────────────────────────────────────
 from flask import request
 import threading
 
-def execute_webhook_trade_d(signal_type, price_override=None, data=None):
-    """Execute Strategy D trade from TradingView OB+FVG+CHoCH webhook."""
-    from bot import rt, state_d, save_state_d, send_telegram, calc_qty, place_order_paper, place_order_live
-    from bot import TRADING_MODE, RISK_PER_TRADE
-    from datetime import datetime, timezone
-    if data is None: data = {}
-
-    price = price_override or rt.price
-    if price <= 0:
-        return {"error": "No price available"}, 400
-
-    if state_d["position"]:
-        return {"error": "Position already open for Strategy D"}, 400
-
-    is_long  = signal_type == "LONG"
-    # TradingView sends sl, tp1, tp2 — use them if available, fallback to calc
+def _wh_d(sig, price=None, data=None):
+    from bot import rt,state_d,save_state_d,send_telegram,calc_qty,place_order_paper,place_order_live,TRADING_MODE,RISK_PER_TRADE
+    from datetime import datetime,timezone
+    if data is None: data={}
+    p=price or rt.price
+    if p<=0 or state_d['position']: return
+    il=sig=='LONG'
     try:
-        sl  = float(data.get("sl",  0)) or (price * 0.985 if is_long else price * 1.015)
-        tp1 = float(data.get("tp1", 0)) or (price + abs(price - sl) * 2.0 if is_long else price - abs(sl - price) * 2.0)
-        tp2 = float(data.get("tp2", 0)) or (price + abs(price - sl) * 3.0 if is_long else price - abs(sl - price) * 3.0)
-    except Exception:
-        sl  = price * 0.985 if is_long else price * 1.015
-        sl_dist = abs(price - sl)
-        tp1 = price + sl_dist * 2.0 if is_long else price - sl_dist * 2.0
-        tp2 = price + sl_dist * 3.0 if is_long else price - sl_dist * 3.0
-
-    sl  = round(sl,  2)
-    tp1 = round(tp1, 2)
-    tp2 = round(tp2, 2)
-
-    confluence = data.get("confluence", "normal") == "strong"
-    risk_pct   = RISK_PER_TRADE * 2 if confluence else RISK_PER_TRADE
-    qty        = calc_qty(state_d["balance"], risk_pct, price, sl)
-
-    order_id = place_order_paper(signal_type, qty, price, sl, tp1) if TRADING_MODE == "PAPER" \
-               else place_order_live(signal_type, qty, sl, tp1)
-
-    if order_id:
-        state_d["position"] = {
-            "type": signal_type, "entry": price, "sl": sl,
-            "tp1": tp1, "tp2": tp2, "qty": qty,
-            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            "order_id": order_id, "has_confluence": confluence,
-            "phase1_done": False, "source": "TradingView OB+FVG+CHoCH",
-        }
-        state_d["last_signal"]      = signal_type
-        state_d["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        sl=float(data.get('sl',0)) or (p*.985 if il else p*1.015)
+        tp1=float(data.get('tp1',0)) or (p+abs(p-sl)*2 if il else p-abs(sl-p)*2)
+        tp2=float(data.get('tp2',0)) or (p+abs(p-sl)*3 if il else p-abs(sl-p)*3)
+    except: sl=p*.985 if il else p*1.015; d=abs(p-sl); tp1=p+d*2 if il else p-d*2; tp2=p+d*3 if il else p-d*3
+    sl=round(sl,2); tp1=round(tp1,2); tp2=round(tp2,2)
+    cf=data.get('confluence','normal')=='strong'
+    qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
+    oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
+    if oid:
+        state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False}
+        state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
-        send_telegram(
-            f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[D] {signal_type} (OB+FVG+CHoCH)</b>\n"
-            f"Entry: ${price:,.2f}\n"
-            f"TP1: ${tp1:,.2f} (2:1) | TP2: ${tp2:,.2f} (3:1)\n"
-            f"SL: ${sl:,.2f}\n"
-            f"{'🔥 Strong Confluence' if confluence else 'Normal'}"
-        )
-        return {"ok": True, "trade": signal_type, "entry": price, "tp1": tp1, "tp2": tp2, "sl": sl}
+        send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
 
-    return {"error": "Order failed"}, 500
-def execute_webhook_trade_a(signal_type, price_override=None, data=None):
-    """Execute Strategy A trade from TradingView webhook."""
-    from bot import rt, state, build_daily_box, build_1h_box
-    from bot import get_candles, calc_qty, place_order_paper, place_order_live
-    from bot import find_4h_sr, detect_divergence, fetch_news, ai_news_score
-    from bot import save_state, send_telegram
-    from bot import TRADING_MODE, RISK_PER_TRADE
-    from datetime import datetime, timezone
-    if data is None: data = {}
-
-    price = price_override or rt.price
-    if price <= 0:
-        return {"error": "No price available"}, 400
-
-    if state["position"]:
-        return {"error": "Position already open"}, 400
-
-    candles_4h = get_candles("4H", 500)
-    candles_1h = get_candles("1H", 200)
-    if not candles_4h or not candles_1h:
-        return {"error": "No candle data"}, 400
-
-    box = build_daily_box(candles_4h)
-    if not box:
-        return {"error": "No box"}, 400
-    state["box"] = box
-
-    support, resistance = find_4h_sr(candles_4h, price)
-    balance = state["balance"]
-
-    with rt.lock:
-        closes_1h = list(rt.closes_1h)
-    highs_1h = [c["high"] for c in candles_1h]
-    lows_1h  = [c["low"]  for c in candles_1h]
-    bull_div, bear_div = detect_divergence(closes_1h, highs_1h[-20:], lows_1h[-20:])
-
-    if signal_type == "SHORT":
-        sl = round(resistance * 1.003, 2)
-        tp = box["mid"]
-        if tp >= price: tp = round(price * 0.99, 2)
-        if sl <= price: sl = round(price * 1.01, 2)
-        if sl > price * 1.015: sl = round(price * 1.015, 2)
-        risk_pct = RISK_PER_TRADE * 2 if bear_div else RISK_PER_TRADE
+def _wh_a(sig, price=None, data=None):
+    from bot import rt,state,build_daily_box,get_candles,calc_qty,place_order_paper,place_order_live
+    from bot import find_4h_sr,detect_divergence,fetch_news,ai_news_score,save_state,send_telegram,TRADING_MODE,RISK_PER_TRADE
+    from datetime import datetime,timezone
+    if data is None: data={}
+    p=price or rt.price
+    if p<=0 or state['position']: return
+    c4=get_candles('4H',500); c1=get_candles('1H',200)
+    if not c4 or not c1: return
+    box=build_daily_box(c4)
+    if not box: return
+    state['box']=box
+    sup,res=find_4h_sr(c4,p)
+    with rt.lock: cl1=list(rt.closes_1h)
+    bd,_=detect_divergence(cl1,[c['high'] for c in c1][-20:],[c['low'] for c in c1][-20:])
+    _,bear_d=detect_divergence(cl1,[c['high'] for c in c1][-20:],[c['low'] for c in c1][-20:])
+    if sig=='SHORT':
+        sl=round(res*1.003,2); tp=box['mid']
+        if tp>=p: tp=round(p*.99,2)
+        if sl<=p: sl=round(p*1.01,2)
+        if sl>p*1.015: sl=round(p*1.015,2)
+        rp=RISK_PER_TRADE*2 if bear_d else RISK_PER_TRADE
     else:
-        sl = round(support * 0.997, 2)
-        tp = box["mid"]
-        if tp <= price: tp = round(price * 1.01, 2)
-        if sl >= price: sl = round(price * 0.99, 2)
-        if sl < price * 0.985: sl = round(price * 0.985, 2)
-        risk_pct = RISK_PER_TRADE * 2 if bull_div else RISK_PER_TRADE
-
-    qty = calc_qty(balance, risk_pct, price, sl)
-    headlines = fetch_news()
-    score, summary = ai_news_score(headlines, signal_type, price, box)
-
-    order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                else place_order_live(signal_type, qty, sl, tp)
-
-    if order_id:
-        state["position"] = {
-            "type": signal_type, "entry": price, "sl": sl, "tp": tp,
-            "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            "order_id": order_id, "news_score": score,
-            "news_summary": summary, "has_divergence": bear_div,
-            "source": "TradingView Webhook"
-        }
-        state["last_signal"] = signal_type
-        state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        sl=round(sup*.997,2); tp=box['mid']
+        if tp<=p: tp=round(p*1.01,2)
+        if sl>=p: sl=round(p*.99,2)
+        if sl<p*.985: sl=round(p*.985,2)
+        rp=RISK_PER_TRADE*2 if bd else RISK_PER_TRADE
+    qty=calc_qty(state['balance'],rp,p,sl)
+    hl=fetch_news(); sc,sm=ai_news_score(hl,sig,p,box)
+    oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
+    if oid:
+        state['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'news_score':sc,'news_summary':sm,'has_divergence':bear_d}
+        state['last_signal']=sig; state['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state()
-        send_telegram(
-            f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[A] {signal_type} (TV Webhook)</b>\n"
-            f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
-            f"{'🔥 DIV' if bear_div else 'Normal'}"
-        )
-        return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
+        send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[A] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
-    return {"error": "Order failed"}, 500
+def _wh_c(sig, price=None, data=None):
+    from bot import rt,state_c,save_state_c,send_telegram,calc_qty,place_order_paper,place_order_live,get_candles,build_1h_box,TRADING_MODE,RISK_PER_TRADE
+    from datetime import datetime,timezone
+    if data is None: data={}
+    p=price or rt.price
+    if p<=0 or state_c.get('position'): return
+    tp=float(data.get('tp',0)); sl=float(data.get('sl',0))
+    if not tp or not sl:
+        cn=get_candles('1H',50)
+        if not cn: return
+        bx=build_1h_box(cn)
+        if not bx: return
+        if sig=='SHORT': tp=bx['mid']; sl=round(p+(p-bx['mid'])/2,2)
+        else: tp=bx['mid']; sl=round(p-(bx['mid']-p)/2,2)
+    else: tp=round(tp,2); sl=round(sl,2)
+    if sig=='SHORT' and (tp>=p or sl<=p): return
+    if sig=='LONG'  and (tp<=p or sl>=p): return
+    qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
+    oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
+    if oid:
+        state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid}
+        state_c['last_signal']=sig; state_c['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
+        save_state_c()
+        send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
-
-def execute_webhook_trade_c(signal_type, price_override=None, data=None):
-    """Execute Strategy C trade from TradingView webhook."""
-    from bot import rt, get_candles, build_1h_box, calc_qty, place_order_paper, place_order_live
-    from bot import state_c, save_state_c, send_telegram
-    from bot import TRADING_MODE, RISK_PER_TRADE
-    from datetime import datetime, timezone
-    import logging
-    log = logging.getLogger(__name__)
-    if data is None: data = {}
-    from bot import get_candles, calc_qty, place_order_paper, place_order_live
-    from bot import find_4h_sr, detect_divergence, fetch_news, ai_news_score
-    from bot import save_state, save_state_b, send_telegram
-    from bot import TRADING_MODE, RISK_PER_TRADE
-    from config import LEVERAGE
-    import os
-    from datetime import datetime, timezone
-    from collections import deque
-
-    price = price_override or rt.price
-    if price <= 0:
-        return {"error": "No price available"}, 400
-
-    if strategy == "A":
-        # Strategy A webhook trade
-        if state["position"]:
-            return {"error": "Position already open"}, 400
-
-        candles_4h = get_candles("4H", 500)
-        candles_1h = get_candles("1H", 200)
-        if not candles_4h or not candles_1h:
-            return {"error": "No candle data"}, 400
-
-        box = build_daily_box(candles_4h)
-        if not box:
-            return {"error": "No box"}, 400
-        state["box"] = box
-
-        support, resistance = find_4h_sr(candles_4h, price)
-        balance = state["balance"]
-
-        with rt.lock:
-            closes_1h = list(rt.closes_1h)
-        highs_1h = [c["high"] for c in candles_1h]
-        lows_1h  = [c["low"]  for c in candles_1h]
-        bull_div, bear_div = detect_divergence(closes_1h, highs_1h[-20:], lows_1h[-20:])
-
-        if signal_type == "SHORT":
-            sl = round(resistance * 1.003, 2)
-            tp = box["mid"]
-            if tp >= price: tp = round(price * 0.99, 2)
-            if sl <= price: sl = round(price * 1.01, 2)
-            if sl > price * 1.015: sl = round(price * 1.015, 2)
-            risk_pct = RISK_PER_TRADE * 2 if bear_div else RISK_PER_TRADE
-        else:  # LONG
-            sl = round(support * 0.997, 2)
-            tp = box["mid"]
-            if tp <= price: tp = round(price * 1.01, 2)
-            if sl >= price: sl = round(price * 0.99, 2)
-            if sl < price * 0.985: sl = round(price * 0.985, 2)
-            risk_pct = RISK_PER_TRADE * 2 if bull_div else RISK_PER_TRADE
-
-        qty = calc_qty(balance, risk_pct, price, sl)
-        headlines = fetch_news()
-        score, summary = ai_news_score(headlines, signal_type, price, box)
-
-        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
-
-        if order_id:
-            state["position"] = {
-                "type": signal_type, "entry": price, "sl": sl, "tp": tp,
-                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                "order_id": order_id, "news_score": score,
-                "news_summary": summary, "has_divergence": bear_div,
-                "source": "TradingView Webhook"
-            }
-            state["last_signal"] = signal_type
-            state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state()
-            send_telegram(
-                f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[A] {signal_type} (TV Webhook)</b>\n"
-                f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
-                f"{'🔥 DIV' if bear_div else 'Normal'}"
-            )
-            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
-
-    elif strategy == "C":
-        # Strategy C — webhook only, uses state_c
-        from bot import state_c, save_state_c, finalize_trade_c
-        if state_c.get("position"):
-            return {"error": "Position C already open"}, 400
-
-        candles_1h = get_candles("1H", 50)
-        if not candles_1h:
-            return {"error": "No candle data"}, 400
-
-        box = build_1h_box(candles_1h)
-        if not box:
-            return {"error": "No box"}, 400
-
-        balance = state_c.get("balance", 10000.0)
-
-        if signal_type == "SHORT":
-            tp_dist = price - box["mid"]
-            if tp_dist <= 0: return {"error": "TP dist invalid for SHORT"}, 400
-            sl_dist = tp_dist / 2
-            tp = box["mid"]
-            sl = round(price + sl_dist, 2)
-        else:  # LONG
-            tp_dist = box["mid"] - price
-            if tp_dist <= 0: return {"error": "TP dist invalid for LONG"}, 400
-            sl_dist = tp_dist / 2
-            tp = box["mid"]
-            sl = round(price - sl_dist, 2)
-
-        qty = calc_qty(balance, RISK_PER_TRADE, price, sl)
-        order_id = place_order_paper(signal_type, qty, price, sl, tp) if TRADING_MODE == "PAPER"                    else place_order_live(signal_type, qty, sl, tp)
-
-        if order_id:
-            state_c["position"] = {
-                "type": signal_type, "entry": price, "sl": sl, "tp": tp,
-                "qty": qty, "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                "order_id": order_id, "has_divergence": False,
-                "source": "TradingView Webhook"
-            }
-            state_c["last_signal"]      = signal_type
-            state_c["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state_c()
-            send_telegram(
-                f"{'🔴' if signal_type=='SHORT' else '🟢'} <b>[C] {signal_type} (TV Webhook)</b>\n"
-                f"Entry: ${price:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}\n"
-                f"R/R 2:1"
-            )
-            return {"ok": True, "trade": signal_type, "entry": price, "tp": tp, "sl": sl}
-
-    return {"error": "Invalid strategy"}, 400
-
-
-@app.route("/webhook/a", methods=["POST"])
+@app.route('/webhook/a', methods=['POST'])
 def webhook_a():
-    """TradingView webhook for Strategy A."""
     try:
-        data = request.get_json(force=True) or {}
-        signal = data.get("signal", "").upper()
-        price  = float(data.get("price", 0)) or None
+        d=request.get_json(force=True) or {}; sig=d.get('signal','').upper(); px=float(d.get('price',0)) or None
+        if sig not in ('LONG','SHORT'): return {'error':'Invalid'},400
+        threading.Thread(target=lambda:_wh_a(sig,px,d),daemon=True).start()
+        return {'ok':True,'strategy':'A'}
+    except Exception as e: return {'error':str(e)},500
 
-        if signal not in ("LONG", "SHORT"):
-            return {"error": f"Invalid signal: {signal}"}, 400
-
-        def run():
-            execute_webhook_trade_a(signal, price, data)
-        threading.Thread(target=run, daemon=True).start()
-
-        return {"ok": True, "received": signal, "strategy": "A"}
-    except Exception as e:
-        return {"error": str(e)}, 500
-
-
-@app.route("/webhook/c", methods=["POST"])
+@app.route('/webhook/c', methods=['POST'])
 def webhook_c():
-    """TradingView webhook for Strategy C."""
     try:
-        data = request.get_json(force=True) or {}
-        signal = data.get("signal", "").upper()
-        price  = float(data.get("price", 0)) or None
+        d=request.get_json(force=True) or {}; sig=d.get('signal','').upper(); px=float(d.get('price',0)) or None
+        if sig not in ('LONG','SHORT'): return {'error':'Invalid'},400
+        threading.Thread(target=lambda:_wh_c(sig,px,d),daemon=True).start()
+        return {'ok':True,'strategy':'C'}
+    except Exception as e: return {'error':str(e)},500
 
-        if signal not in ("LONG", "SHORT"):
-            return {"error": f"Invalid signal: {signal}"}, 400
-
-        def run():
-            execute_webhook_trade_c(signal, price, data)
-        threading.Thread(target=run, daemon=True).start()
-
-        return {"ok": True, "received": signal, "strategy": "C"}
-    except Exception as e:
-        return {"error": str(e)}, 500
-
-DASHBOARD_D = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NRM Bot — Strategy D</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0a0e1a; --bg2: #111827; --bg3: #1a2235;
-  --border: #1e2d45; --text: #e2e8f0; --text2: #94a3b8; --text3: #475569;
-  --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
-  --purple: #8b5cf6; --teal: #14b8a6;
-}
-body { background: var(--bg); color: var(--text); font-family: Inter, sans-serif; }
-.app { display: grid; grid-template-columns: 1fr 360px; min-height: 100vh; }
-.main-col { display: flex; flex-direction: column; }
-.side-col { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; }
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.logo { font-size: 15px; font-weight: 700; }
-.logo span { color: var(--teal); }
-.badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.5px; }
-.badge-d { background: rgba(20,184,166,0.15); color: var(--teal); border: 1px solid rgba(20,184,166,0.3); }
-.badge-paper { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-tv { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
-.topbar-right { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 8px; }
-.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-.chart-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
-.tf-btn { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text2); }
-.tf-btn.active { background: var(--teal); color: white; border-color: var(--teal); }
-.chart-wrap { flex: 1; height: calc(100vh - 100px); min-height: 400px; overflow: hidden; }
-.chart-wrap > div, .chart-wrap .tradingview-widget-container, .chart-wrap .tradingview-widget-container__widget { height: 100% !important; width: 100% !important; }
-.side-section { padding: 16px; border-bottom: 1px solid var(--border); }
-.side-title { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
-.price-display { padding: 16px; border-bottom: 1px solid var(--border); }
-.price-main { font-size: 28px; font-weight: 700; color: var(--teal); }
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
-.stat-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-.stat-value { font-size: 18px; font-weight: 700; }
-.signal-box { padding: 14px 16px; background: var(--bg3); border-radius: 10px; border: 1px solid var(--border); }
-.signal-type { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.signal-detail { font-size: 10px; color: var(--text2); }
-.pos-card { background: var(--bg3); border-radius: 10px; border: 1px solid var(--border); padding: 14px; }
-.pos-row { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; }
-.pos-label { color: var(--text3); }
-.pos-val { font-weight: 600; }
-.trade-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
-.pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 700; }
-.pill-long { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-short { background: rgba(239,68,68,0.15); color: var(--red); }
-.pill-win { background: rgba(16,185,129,0.15); color: var(--green); }
-.pill-loss { background: rgba(239,68,68,0.15); color: var(--red); }
-.nav-links { display: flex; gap: 6px; }
-.rr-badge { background: rgba(20,184,166,0.15); color: var(--teal); border: 1px solid rgba(20,184,166,0.3); font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; }
-</style>
-</head>
-<body>
-<div class="app">
-  <div class="main-col">
-    <div class="topbar">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="logo">NRM <span>Bot</span></div>
-        <span class="badge badge-d">STRATEGY D</span>
-        <span class="badge badge-paper">PAPER</span>
-        <span class="badge badge-tv">TV WEBHOOK</span>
-        <span class="rr-badge">R/R 2:1 / 3:1</span>
-      </div>
-      <div class="topbar-right">
-        <div class="nav-links">
-          <a href="/" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);text-decoration:none;">A</a>
-          <a href="/b" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(139,92,246,0.15);color:#a855f7;border:1px solid rgba(139,92,246,0.3);text-decoration:none;">B</a>
-          <a href="/c" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3);text-decoration:none;">C</a>
-        <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.15);color:#14b8a6;border:1px solid rgba(20,184,166,0.3);text-decoration:none;">D</a>
-          <a href="/d" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(20,184,166,0.25);color:#14b8a6;border:1px solid rgba(20,184,166,0.5);text-decoration:none;font-weight:700;">D</a>
-          <a href="/analytics" style="font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);text-decoration:none;">📊</a>
-        </div>
-        <div class="pulse"></div>
-        <span id="live-time"></span>
-      </div>
-    </div>
-    <div class="chart-toolbar">
-      <span style="font-size:11px;color:var(--text3);margin-right:4px;">BTCUSDT PERP</span>
-      {% for tf in ['1m','5m','15m','1H','4H','1D'] %}
-      <button class="tf-btn {% if tf == '15m' %}active{% endif %}"
-              onclick="setTF('{{ tf }}', this)">{{ tf }}</button>
-      {% endfor %}
-    </div>
-    <div class="chart-wrap">
-      <div class="tradingview-widget-container">
-        <div id="tv_chart"></div>
-        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-        <script>
-        var tvWidget;
-        function initChart(interval) {
-          if (tvWidget) { try { tvWidget.remove(); } catch(e){} }
-          tvWidget = new TradingView.widget({
-            container_id: "tv_chart",
-            symbol: "BITGET:BTCUSDT.P",
-            interval: interval || "15",
-            timezone: "UTC",
-            theme: "dark",
-            style: "1",
-            locale: "en",
-            toolbar_bg: "#111827",
-            enable_publishing: false,
-            hide_top_toolbar: false,
-            hide_legend: false,
-            save_image: false,
-            studies: ["RSI@tv-basicstudies"],
-            width: "100%",
-            height: "100%",
-          });
-        }
-        initChart("15");
-        function setTF(tf, btn) {
-          document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          const map = {'1m':'1','5m':'5','15m':'15','1H':'60','4H':'240','1D':'D'};
-          initChart(map[tf] || tf);
-        }
-        </script>
-      </div>
-    </div>
-  </div>
-
-  <div class="side-col">
-    <!-- PRICE -->
-    <div class="price-display">
-      <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">BTCUSDT · Perpetual</div>
-      <div class="price-main" id="live-price">${{ "%.2f"|format(current_price) }}</div>
-    </div>
-
-    <!-- PERFORMANCE -->
-    <div class="side-section">
-      <div class="side-title">Performance</div>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Balance</div>
-          <div class="stat-value" style="color:var(--teal)">${{ "%.0f"|format(balance) }}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Total P&L</div>
-          <div class="stat-value" style="color:{% if pnl >= 0 %}var(--green){% else %}var(--red){% endif %}">
-            {{ '+' if pnl >= 0 else '' }}${{ "%.2f"|format(pnl) }}
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Win Rate</div>
-          <div class="stat-value" style="color:var(--teal)">{{ win_rate }}%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">W / L</div>
-          <div class="stat-value">{{ wins }}W · {{ losses }}L</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- CURRENT SIGNAL -->
-    <div class="side-section">
-      <div class="side-title">Current Signal</div>
-      <div class="signal-box">
-        {% if position %}
-          <div class="signal-type" style="color:{% if position.type=='LONG' %}var(--green){% else %}var(--red){% endif %}">
-            <span>▲</span> {{ position.type }}
-          </div>
-          <div class="signal-detail">{{ position.time }}</div>
-          {% if position.has_confluence %}
-          <div style="margin-top:6px;"><span class="badge" style="background:rgba(20,184,166,0.15);color:var(--teal);border:1px solid rgba(20,184,166,0.3);">🔥 Strong Confluence</span></div>
-          {% endif %}
-        {% else %}
-          <div class="signal-type" style="color:var(--text2)"><span>○</span> WAIT</div>
-          <div class="signal-detail">{{ signal }}</div>
-          {% if signal_time %}<div class="signal-detail">{{ signal_time }}</div>{% endif %}
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- OPEN POSITION -->
-    {% if position %}
-    <div class="side-section">
-      <div class="side-title">Open Position</div>
-      <div class="pos-card">
-        <div class="pos-row"><span class="pos-label">Type</span><span class="pos-val" style="color:{% if position.type=='LONG' %}var(--green){% else %}var(--red){% endif %}">{{ position.type }}</span></div>
-        <div class="pos-row"><span class="pos-label">Entry</span><span class="pos-val">${{ "%.2f"|format(position.entry) }}</span></div>
-        <div class="pos-row"><span class="pos-label">TP1 (2:1)</span><span class="pos-val" style="color:var(--green)">${{ "%.2f"|format(position.tp1) }}</span></div>
-        <div class="pos-row"><span class="pos-label">TP2 (3:1)</span><span class="pos-val" style="color:var(--teal)">${{ "%.2f"|format(position.tp2) }}</span></div>
-        <div class="pos-row"><span class="pos-label">Stop Loss</span><span class="pos-val" style="color:var(--red)">${{ "%.2f"|format(position.sl) }}</span></div>
-        <div class="pos-row"><span class="pos-label">Qty</span><span class="pos-val">{{ position.qty }}</span></div>
-        {% if position.phase1_done %}
-        <div style="margin-top:8px;padding:6px;background:rgba(16,185,129,0.1);border-radius:6px;font-size:10px;color:var(--green);text-align:center;">✓ TP1 HIT — Riding to TP2</div>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- TRADE HISTORY -->
-    <div class="side-section">
-      <div class="side-title">Trade History</div>
-      {% if trades %}
-        {% for t in trades|reverse %}
-        {% if loop.index <= 15 %}
-        <div class="trade-row">
-          <div>
-            <span class="pill pill-{{ t.type|lower }}">{{ t.type }}</span>
-            <div style="font-size:9px;color:var(--text3);margin-top:2px;">{{ t.time[5:16] if t.time else '' }}</div>
-          </div>
-          <div style="font-size:10px;color:var(--text2)">{{ t.note or '—' }}</div>
-          <div style="font-size:11px;font-weight:600;color:{% if t.pnl >= 0 %}var(--green){% else %}var(--red){% endif %}">
-            {{ '+' if t.pnl >= 0 else '' }}${{ "%.1f"|format(t.pnl) }}
-          </div>
-          <span class="pill pill-{{ t.result|lower }}">{{ t.result }}</span>
-        </div>
-        {% endif %}
-        {% endfor %}
-      {% else %}
-        <div style="color:var(--text3);font-size:11px;">No trades yet</div>
-      {% endif %}
-    </div>
-  </div>
-</div>
-
-<script>
-// Live clock
-setInterval(() => {
-  document.getElementById('live-time').textContent =
-    new Date().toUTCString().slice(17,25) + ' UTC';
-}, 1000);
-
-// Auto-refresh data every 10s
-setInterval(() => {
-  fetch('/api/d').then(r => r.json()).then(d => {
-    const price = d.current_price || 0;
-    if (price > 0) document.getElementById('live-price').textContent = '$' + price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  });
-}, 10000);
-</script>
-</body>
-</html>
-"""
-
-@app.route("/webhook/d", methods=["POST"])
+@app.route('/webhook/d', methods=['POST'])
 def webhook_d():
-    """TradingView webhook for Strategy D (OB + FVG + CHoCH)."""
     try:
-        data   = request.get_json(force=True) or {}
-        signal = data.get("signal", "").upper()
-        price  = float(data.get("price", 0)) or None
+        d=request.get_json(force=True) or {}; sig=d.get('signal','').upper(); px=float(d.get('price',0)) or None
+        if sig not in ('LONG','SHORT'): return {'error':'Invalid'},400
+        threading.Thread(target=lambda:_wh_d(sig,px,d),daemon=True).start()
+        return {'ok':True,'strategy':'D'}
+    except Exception as e: return {'error':str(e)},500
 
-        if signal not in ("LONG", "SHORT"):
-            return {"error": f"Invalid signal: {signal}"}, 400
-
-        def run():
-            execute_webhook_trade_d(signal, price, data)
-        threading.Thread(target=run, daemon=True).start()
-
-        return {"ok": True, "received": signal, "strategy": "D"}
-    except Exception as e:
-        return {"error": str(e)}, 500
-
-if __name__ == "__main__":
-    print(f"\n🚀 NRM Bot starting on port {PORT}")
-    print(f"   Dashboard: http://localhost:{PORT}\n")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+if __name__ == '__main__':
+    print(f'\n🚀 NRM Bot starting on port {PORT}')
+    app.run(host='0.0.0.0', port=PORT, debug=False)
