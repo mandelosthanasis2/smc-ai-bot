@@ -20,7 +20,7 @@ SYMBOL         = "BTCUSDT"          # Bitget v2 symbol (no suffix needed)
 TIMEFRAME_1H   = "1H"
 TIMEFRAME_1D   = "1D"
 RISK_PER_TRADE = 0.02   # 2% risk per trade
-LEVERAGE       = 1      # Leverage (1x default — change here to increase: 1, 2, 3, 5, 10)
+LEVERAGE = int(os.environ.get("LEVERAGE", 1))
 
 # ── SMC STRATEGY RULES ───────────────────────────────────────────
 SMC_RULES = {
