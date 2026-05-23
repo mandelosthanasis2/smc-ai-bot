@@ -4,17 +4,22 @@ New design: sidebar, cards, mobile-first, no TradingView
 """
 
 import os
+import threading
 from flask import Flask, render_template_string, jsonify, session
 from bot import state, state_b, state_c, state_d, bot_thread
 from config import PORT
 from analytics import analytics_bp
 from auth import auth_bp, login_required
+from analysis_agent import start_scheduler
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "nrmbot-secret-2024")
 app.register_blueprint(analytics_bp)
 app.register_blueprint(auth_bp)
 bot_thread.start()
+
+# ── Start analysis agent scheduler (briefings at 08:00, 13:00, 20:00 Athens) ──
+threading.Thread(target=start_scheduler, daemon=True).start()
 
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;600;700;800&display=swap');
