@@ -463,7 +463,7 @@ def _wh_d(sig, price=None, data=None):
     qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
     # ── AI Validator ──────────────────────────────────────────
     from bot import _ai_validate, rt as _rt
-    _ai_act,_ai_mult = _ai_validate(
+    _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="D", side=sig,
         entry_price=p, stop_loss=sl, take_profit=tp1,
         rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
@@ -538,7 +538,7 @@ def _wh_c(sig, price=None, data=None):
     qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
     # ── AI Validator ──────────────────────────────────────────
     from bot import _ai_validate, rt as _rt
-    _ai_act,_ai_mult = _ai_validate(
+    _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="C", side=sig,
         entry_price=p, stop_loss=sl, take_profit=tp,
         rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
