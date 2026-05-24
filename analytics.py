@@ -64,7 +64,8 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
             "total_pnl": 0, "avg_win": 0, "avg_loss": 0,
             "profit_factor": 0, "max_drawdown": 0,
             "best_trade": 0, "worst_trade": 0,
-            "equity_curve": [], "pnl_by_hour": {},
+            "equity_curve": [], "pnl_by_hour": {}, "pnl_by_day": {},
+            "top_hours": [], "bottom_hours": [], "best_days": [], "worst_days": [],
             "consecutive_wins": 0, "consecutive_losses": 0,
         }
 
@@ -103,18 +104,57 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
         if dd > max_dd:
             max_dd = dd
 
-    # PnL ανά ώρα
-    pnl_by_hour = {str(h): {"pnl": 0, "trades": 0, "wins": 0} for h in range(24)}
+    # PnL + Win rate ανά ώρα
+    DAY_NAMES = ["Δευτέρα","Τρίτη","Τετάρτη","Πέμπτη","Παρασκευή","Σάββατο","Κυριακή"]
+    pnl_by_hour = {str(h): {"pnl": 0, "trades": 0, "wins": 0, "win_rate": 0} for h in range(24)}
+    pnl_by_day  = {str(d): {"pnl": 0, "trades": 0, "wins": 0, "win_rate": 0, "name": DAY_NAMES[d]} for d in range(7)}
+
     for t in trades:
         try:
             time_str = str(t["time"] or "")
-            hour = str(int(time_str[11:13])) if len(time_str) >= 13 else "0"
+            if len(time_str) >= 13:
+                hour = str(int(time_str[11:13]))
+            else:
+                hour = "0"
             pnl_by_hour[hour]["pnl"]    = round(pnl_by_hour[hour]["pnl"] + float(t["pnl"] or 0), 2)
             pnl_by_hour[hour]["trades"] += 1
             if t["result"] == "WIN":
                 pnl_by_hour[hour]["wins"] += 1
+
+            # Day of week από trade_time string "YYYY-MM-DD HH:MM"
+            if len(time_str) >= 10:
+                from datetime import datetime
+                try:
+                    dt  = datetime.strptime(time_str[:10], "%Y-%m-%d")
+                    dow = str(dt.weekday())  # 0=Monday
+                    pnl_by_day[dow]["pnl"]    = round(pnl_by_day[dow]["pnl"] + float(t["pnl"] or 0), 2)
+                    pnl_by_day[dow]["trades"] += 1
+                    if t["result"] == "WIN":
+                        pnl_by_day[dow]["wins"] += 1
+                except Exception:
+                    pass
         except Exception:
             pass
+
+    # Υπολογισμός win rates
+    for h in pnl_by_hour:
+        tr = pnl_by_hour[h]["trades"]
+        pnl_by_hour[h]["win_rate"] = round(pnl_by_hour[h]["wins"] / tr * 100, 1) if tr > 0 else 0
+
+    for d in pnl_by_day:
+        tr = pnl_by_day[d]["trades"]
+        pnl_by_day[d]["win_rate"] = round(pnl_by_day[d]["wins"] / tr * 100, 1) if tr > 0 else 0
+
+    # Top/Bottom windows (min 2 trades για να μετράει)
+    hour_wr = [(h, pnl_by_hour[h]) for h in pnl_by_hour if pnl_by_hour[h]["trades"] >= 2]
+    hour_wr.sort(key=lambda x: x[1]["win_rate"], reverse=True)
+    top_hours    = hour_wr[:3]
+    bottom_hours = hour_wr[-3:][::-1] if len(hour_wr) >= 3 else []
+
+    day_wr = [(d, pnl_by_day[d]) for d in pnl_by_day if pnl_by_day[d]["trades"] >= 1]
+    day_wr.sort(key=lambda x: x[1]["win_rate"], reverse=True)
+    best_days  = day_wr[:2]
+    worst_days = day_wr[-2:][::-1] if len(day_wr) >= 2 else []
 
     # Consecutive wins/losses
     max_cw = max_cl = cw = cl = 0
@@ -140,6 +180,11 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
         "worst_trade":         round(min(pnls), 2) if pnls else 0,
         "equity_curve":        equity_curve,
         "pnl_by_hour":         pnl_by_hour,
+        "pnl_by_day":          pnl_by_day,
+        "top_hours":           top_hours,
+        "bottom_hours":        bottom_hours,
+        "best_days":           best_days,
+        "worst_days":          worst_days,
         "consecutive_wins":    max_cw,
         "consecutive_losses":  max_cl,
         "gross_profit":        round(gross_profit, 2),
@@ -818,6 +863,243 @@ function statCard(label, value, color, sub='') {
   `;
 }
 
+// ── TIMING ANALYSIS ──────────────────────────────────────────
+async function loadTiming() {
+  setActiveNav('nav-timing');
+  document.getElementById('main').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text2);font-size:13px;">
+      Φόρτωση timing data...
+    </div>`;
+
+  const res = await fetch('/api/analytics');
+  const all = await res.json();
+
+  // Συγκεντρώνουμε όλα τα trades απ' όλες τις strategies
+  const strats = ['A','B','C','D'];
+  let byHour = {};
+  let byDay  = {};
+
+  strats.forEach(s => {
+    const st = all[s]?.stats || {};
+    const ph = st.pnl_by_hour || {};
+    const pd = st.pnl_by_day  || {};
+
+    Object.keys(ph).forEach(h => {
+      if (!byHour[h]) byHour[h] = {pnl:0, trades:0, wins:0, win_rate:0};
+      byHour[h].pnl    += ph[h].pnl    || 0;
+      byHour[h].trades += ph[h].trades || 0;
+      byHour[h].wins   += ph[h].wins   || 0;
+    });
+    Object.keys(pd).forEach(d => {
+      if (!byDay[d]) byDay[d] = {pnl:0, trades:0, wins:0, win_rate:0, name: pd[d].name};
+      byDay[d].pnl    += pd[d].pnl    || 0;
+      byDay[d].trades += pd[d].trades || 0;
+      byDay[d].wins   += pd[d].wins   || 0;
+    });
+  });
+
+  // Υπολογισμός win rates
+  Object.keys(byHour).forEach(h => {
+    byHour[h].win_rate = byHour[h].trades > 0
+      ? Math.round(byHour[h].wins / byHour[h].trades * 100) : 0;
+  });
+  Object.keys(byDay).forEach(d => {
+    byDay[d].win_rate = byDay[d].trades > 0
+      ? Math.round(byDay[d].wins / byDay[d].trades * 100) : 0;
+  });
+
+  // Top/Bottom hours (min 2 trades)
+  const hourArr = Object.entries(byHour)
+    .filter(([h,v]) => v.trades >= 2)
+    .sort((a,b) => b[1].win_rate - a[1].win_rate);
+  const topH    = hourArr.slice(0,3);
+  const bottomH = hourArr.slice(-3).reverse();
+
+  // Best/Worst days
+  const dayArr = Object.entries(byDay)
+    .filter(([d,v]) => v.trades >= 1)
+    .sort((a,b) => b[1].win_rate - a[1].win_rate);
+
+  const totalTrades = Object.values(byHour).reduce((s,v) => s+v.trades, 0);
+
+  document.getElementById('main').innerHTML = `
+    <!-- SUMMARY CARDS -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;">
+      ${topH.length ? `
+        ${topH.map(([h,v]) => `
+          <div class="stat-card" style="--accent:#10b981;">
+            <div class="stat-label">🏆 Best: ${h}:00 UTC</div>
+            <div class="stat-value" style="color:#10b981;">${v.win_rate}%</div>
+            <div class="stat-sub">${v.trades} trades · $${v.pnl.toFixed(0)}</div>
+          </div>`).join('')}
+        ${bottomH.map(([h,v]) => `
+          <div class="stat-card" style="--accent:#ef4444;">
+            <div class="stat-label">⚠️ Worst: ${h}:00 UTC</div>
+            <div class="stat-value" style="color:#ef4444;">${v.win_rate}%</div>
+            <div class="stat-sub">${v.trades} trades · $${v.pnl.toFixed(0)}</div>
+          </div>`).join('')}
+      ` : `<div style="grid-column:1/-1;color:var(--text2);font-size:12px;padding:20px;">
+        Δεν υπάρχουν αρκετά δεδομένα ακόμα (χρειάζονται 2+ trades/ώρα).
+        Τα charts θα γεμίσουν καθώς το bot εκτελεί trades.
+      </div>`}
+    </div>
+
+    <!-- HOURLY WIN RATE CHART -->
+    <div class="chart-card" style="margin-bottom:16px;">
+      <div class="chart-title" style="--accent:var(--a)">
+        <span style="background:var(--a)"></span>
+        Win Rate ανά Ώρα (UTC) — Όλες οι Στρατηγικές · ${totalTrades} trades
+      </div>
+      <div class="chart-wrap tall"><canvas id="timing-hour-wr"></canvas></div>
+    </div>
+
+    <!-- HOURLY PNL CHART -->
+    <div class="chart-card" style="margin-bottom:16px;">
+      <div class="chart-title" style="--accent:var(--yellow)">
+        <span style="background:var(--yellow)"></span>P&L ανά Ώρα (USD)
+      </div>
+      <div class="chart-wrap"><canvas id="timing-hour-pnl"></canvas></div>
+    </div>
+
+    <!-- DAY OF WEEK -->
+    <div class="grid-2" style="margin-bottom:16px;">
+      <div class="chart-card">
+        <div class="chart-title" style="--accent:var(--b)">
+          <span style="background:var(--b)"></span>Win Rate ανά Ημέρα Εβδομάδας
+        </div>
+        <div class="chart-wrap"><canvas id="timing-day-wr"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title" style="--accent:var(--c)">
+          <span style="background:var(--c)"></span>Αριθμός Trades ανά Ημέρα
+        </div>
+        <div class="chart-wrap"><canvas id="timing-day-count"></canvas></div>
+      </div>
+    </div>
+
+    <!-- TRADES TABLE PER HOUR -->
+    <div class="chart-card">
+      <div class="chart-title" style="--accent:var(--text3)">
+        <span style="background:var(--text3)"></span>Αναλυτικά ανά Ώρα
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="trades-table">
+          <thead><tr>
+            <th>Ώρα (UTC)</th><th>Trades</th><th>Wins</th><th>Losses</th>
+            <th>Win Rate</th><th>Net P&L</th><th>Avg/Trade</th>
+          </tr></thead>
+          <tbody>
+            ${Array.from({length:24},(_,i)=>String(i)).map(h => {
+              const v = byHour[h] || {trades:0,wins:0,pnl:0,win_rate:0};
+              if (v.trades === 0) return '';
+              const losses = v.trades - v.wins;
+              const avg = v.trades > 0 ? (v.pnl/v.trades).toFixed(1) : 0;
+              const wrColor = v.win_rate >= 60 ? '#10b981' : v.win_rate >= 45 ? '#f59e0b' : '#ef4444';
+              return `<tr>
+                <td style="font-weight:600;">${h.padStart(2,'0')}:00</td>
+                <td>${v.trades}</td>
+                <td class="text-green">${v.wins}</td>
+                <td class="text-red">${losses}</td>
+                <td style="color:${wrColor};font-weight:600;">${v.win_rate}%</td>
+                <td class="${v.pnl>=0?'text-green':'text-red'}">$${v.pnl.toFixed(0)}</td>
+                <td class="${avg>=0?'text-green':'text-red'}">$${avg}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  // Chart: Win Rate ανά ώρα
+  const hours = Array.from({length:24},(_,i)=>String(i));
+  const wrData = hours.map(h => byHour[h]?.win_rate || 0);
+  const wrColors = wrData.map(v => v >= 60 ? 'rgba(16,185,129,0.7)' : v >= 45 ? 'rgba(245,158,11,0.7)' : v > 0 ? 'rgba(239,68,68,0.7)' : 'rgba(255,255,255,0.05)');
+  const ctx1 = document.getElementById('timing-hour-wr').getContext('2d');
+  if (charts['timing-hour-wr']) charts['timing-hour-wr'].destroy();
+  charts['timing-hour-wr'] = new Chart(ctx1, {
+    type: 'bar',
+    data: {
+      labels: hours.map(h => h.padStart(2,'0')+':00'),
+      datasets: [{
+        label: 'Win Rate %',
+        data: wrData,
+        backgroundColor: wrColors,
+        borderRadius: 3,
+      }]
+    },
+    options: chartDefaults({
+      scales: {
+        x: { grid:{color:'rgba(255,255,255,0.02)'}, ticks:{color:'#3d4f6e',font:{size:8}} },
+        y: { max:100, grid:{color:'rgba(255,255,255,0.03)'}, ticks:{color:'#3d4f6e',font:{size:9}, callback:v=>v+'%'} },
+      },
+      plugins: {
+        tooltip: { callbacks: { label: c => `Win Rate: ${c.raw}% (${byHour[String(c.dataIndex)]?.trades||0} trades)` } }
+      }
+    }),
+  });
+
+  // Chart: PnL ανά ώρα
+  const pnlData = hours.map(h => byHour[h]?.pnl || 0);
+  const pnlColors = pnlData.map(v => v >= 0 ? 'rgba(16,185,129,0.6)' : 'rgba(239,68,68,0.6)');
+  const ctx2 = document.getElementById('timing-hour-pnl').getContext('2d');
+  if (charts['timing-hour-pnl']) charts['timing-hour-pnl'].destroy();
+  charts['timing-hour-wr2'] = new Chart(ctx2, {
+    type: 'bar',
+    data: {
+      labels: hours.map(h => h.padStart(2,'0')+':00'),
+      datasets: [{ label: 'P&L $', data: pnlData, backgroundColor: pnlColors, borderRadius: 3 }]
+    },
+    options: chartDefaults({
+      scales: {
+        x: { grid:{color:'rgba(255,255,255,0.02)'}, ticks:{color:'#3d4f6e',font:{size:8}} },
+        y: { grid:{color:'rgba(255,255,255,0.03)'}, ticks:{color:'#3d4f6e',font:{size:9}, callback:v=>'$'+v} },
+      }
+    }),
+  });
+
+  // Chart: Win Rate ανά ημέρα
+  const days7 = ['0','1','2','3','4','5','6'];
+  const dayLabels = days7.map(d => byDay[d]?.name || ['Δευ','Τρι','Τετ','Πεμ','Παρ','Σαβ','Κυρ'][+d]);
+  const dayWR  = days7.map(d => byDay[d]?.win_rate || 0);
+  const dayColors = dayWR.map(v => v >= 60 ? 'rgba(16,185,129,0.7)' : v >= 45 ? 'rgba(245,158,11,0.7)' : v > 0 ? 'rgba(239,68,68,0.7)' : 'rgba(255,255,255,0.05)');
+  const ctx3 = document.getElementById('timing-day-wr').getContext('2d');
+  if (charts['timing-day-wr']) charts['timing-day-wr'].destroy();
+  charts['timing-day-wr'] = new Chart(ctx3, {
+    type: 'bar',
+    data: {
+      labels: dayLabels,
+      datasets: [{ label: 'Win Rate %', data: dayWR, backgroundColor: dayColors, borderRadius: 4 }]
+    },
+    options: chartDefaults({
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#8892a8',font:{size:11}} },
+        y: { max:100, grid:{color:'rgba(255,255,255,0.03)'}, ticks:{color:'#3d4f6e',font:{size:9}, callback:v=>v+'%'} }
+      }
+    }),
+  });
+
+  // Chart: Trades count ανά ημέρα
+  const dayCount = days7.map(d => byDay[d]?.trades || 0);
+  const ctx4 = document.getElementById('timing-day-count').getContext('2d');
+  if (charts['timing-day-count']) charts['timing-day-count'].destroy();
+  charts['timing-day-count'] = new Chart(ctx4, {
+    type: 'bar',
+    data: {
+      labels: dayLabels,
+      datasets: [{ label: 'Trades', data: dayCount, backgroundColor: 'rgba(139,92,246,0.6)', borderRadius: 4 }]
+    },
+    options: chartDefaults({
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#8892a8',font:{size:11}} },
+        y: { grid:{color:'rgba(255,255,255,0.03)'}, ticks:{color:'#3d4f6e',font:{size:9}} }
+      },
+      plugins: { tooltip: { callbacks: { label: c => `${c.raw} trades` } } }
+    }),
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // Load first tab on page load
 loadStrategy('A');
 </script>
