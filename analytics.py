@@ -1009,14 +1009,20 @@ function statCard(label, value, color, sub='') {
 
 // ── TIMING ANALYSIS ──────────────────────────────────────────
 async function loadTiming() {
-  setActiveNav('nav-timing');
   document.getElementById('data-timing').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text2);font-size:13px;">
       Φόρτωση timing data...
     </div>`;
 
-  const res = await fetch('/api/analytics');
-  const all = await res.json();
+  let all = {};
+  try {
+    const res = await fetch('/api/analytics');
+    all = await res.json();
+  } catch(e) {
+    document.getElementById('data-timing').innerHTML = `
+      <div style="padding:40px;color:#ef4444;font-size:12px;">Error loading data: ${e.message}</div>`;
+    return;
+  }
 
   // Συγκεντρώνουμε όλα τα trades απ' όλες τις strategies
   const strats = ['A','B','C','D'];
