@@ -19,6 +19,73 @@ import anthropic
 from config import *
 from database import init_db, seed_if_empty, db_load_state, db_save_state, db_save_trade
 
+# ── AI Validator ─────────────────────────────────────────────────
+# SHADOW_MODE=True: καταγράφει αλλά ΔΕΝ επηρεάζει trades
+# Άλλαξε σε False για να ενεργοποιήσεις το filter
+AI_VALIDATOR_ENABLED = os.environ.get("AI_VALIDATOR_ENABLED", "true").lower() == "true"
+AI_SHADOW_MODE       = os.environ.get("AI_SHADOW_MODE", "true").lower() == "true"
+
+def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
+                 rsi_15m, rsi_1h, box, has_divergence, trades, balance,
+                 initial_balance=10000.0, candles_4h=None, extra=None):
+    """
+    Καλεί το AI Validator και επιστρέφει (action, size_multiplier).
+    Σε shadow mode: πάντα επιστρέφει GO/1.0 αλλά καταγράφει στα logs.
+    """
+    if not AI_VALIDATOR_ENABLED:
+        return "GO", 1.0
+    try:
+        from ai_validator import validate_signal
+        result = validate_signal(
+            strategy     = strategy,
+            user_id      = 1,
+            symbol       = BITGET_SYMBOL,
+            side         = side,
+            entry_price  = entry_price,
+            stop_loss    = stop_loss,
+            take_profit  = take_profit,
+            context      = {
+                "rsi_15m":           rsi_15m,
+                "rsi_1h":            rsi_1h,
+                "current_price":     entry_price,
+                "last_price_update": time.time(),
+                "trades":            trades[-50:] if trades else [],
+                "has_divergence":    has_divergence,
+                "box":               box or {},
+                "candles_4h":        candles_4h or [],
+                "extra":             extra or {},
+            },
+            user_settings = {
+                "balance":         balance,
+                "initial_balance": initial_balance,
+                "risk_percent":    RISK_PER_TRADE * 100,
+                "trading_mode":    TRADING_MODE,
+            },
+            shadow_mode = AI_SHADOW_MODE,
+        )
+        action = result.action
+        mult   = result.size_multiplier
+        log.info(
+            f"[AIValidator] [{strategy}] {side} → {action} "
+            f"(conf={result.confidence:.2f}, {result.processing_time_ms}ms) "
+            f"{'[SHADOW]' if AI_SHADOW_MODE else '[ACTIVE]'}"
+        )
+        # Telegram notification για σημαντικές αποφάσεις
+        if action in ("SKIP", "DOUBLE_SIZE") or (action == "REDUCE_SIZE" and not AI_SHADOW_MODE):
+            shadow_tag = " [SHADOW]" if AI_SHADOW_MODE else ""
+            reason = list(result.reasoning.values())[0] if result.reasoning else ""
+            send_telegram(
+                f"🤖 <b>[AI{shadow_tag}] {strategy} {action}</b>\n"
+                f"{side} @ ${entry_price:,.0f}\n"
+                f"{reason[:100]}"
+            )
+        if AI_SHADOW_MODE:
+            return "GO", 1.0   # shadow: πάντα εκτέλεση κανονικά
+        return action, mult
+    except Exception as e:
+        log.error(f"[AIValidator] Error: {e} — defaulting to GO")
+        return "GO", 1.0
+
 # -- LOGGING ------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -950,6 +1017,18 @@ def run_strategy_a():
         headlines      = fetch_news()
         score, summary = ai_news_score(headlines, "SHORT", price, box)
         send_telegram(f"📰 <b>[A] News SHORT</b>\nScore:{score} | {summary}")
+        # ── AI Validator ──────────────────────────────────────
+        ai_action, ai_mult = _ai_validate(
+            strategy="A", side="SHORT",
+            entry_price=price, stop_loss=sl, take_profit=tp,
+            rsi_15m=rt.rsi_15m, rsi_1h=rsi,
+            box=box, has_divergence=bear_div,
+            trades=state.get("trades",[]), balance=balance,
+            candles_4h=candles_4h,
+        )
+        if ai_action == "SKIP": return
+        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
+        # ─────────────────────────────────────────────────────
         order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
         if order_id:
             state["position"] = {"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
@@ -974,6 +1053,18 @@ def run_strategy_a():
         headlines      = fetch_news()
         score, summary = ai_news_score(headlines, "LONG", price, box)
         send_telegram(f"📰 <b>[A] News LONG</b>\nScore:{score} | {summary}")
+        # ── AI Validator ──────────────────────────────────────
+        ai_action, ai_mult = _ai_validate(
+            strategy="A", side="LONG",
+            entry_price=price, stop_loss=sl, take_profit=tp,
+            rsi_15m=rt.rsi_15m, rsi_1h=rsi,
+            box=box, has_divergence=bull_div,
+            trades=state.get("trades",[]), balance=balance,
+            candles_4h=candles_4h,
+        )
+        if ai_action == "SKIP": return
+        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
+        # ─────────────────────────────────────────────────────
         order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
         if order_id:
             state["position"] = {"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
@@ -1101,6 +1192,17 @@ def run_strategy_b():
         tp=box["mid"]; sl=round(price+sl_dist, 2)
         risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
+        # ── AI Validator ──────────────────────────────────────
+        ai_action, ai_mult = _ai_validate(
+            strategy="B", side="SHORT",
+            entry_price=price, stop_loss=sl, take_profit=tp,
+            rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
+            box=box, has_divergence=bear_div,
+            trades=state_b.get("trades",[]), balance=balance,
+        )
+        if ai_action == "SKIP": return
+        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
+        # ─────────────────────────────────────────────────────
         order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
         if order_id:
             state_b["position"]={"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
@@ -1119,6 +1221,17 @@ def run_strategy_b():
         tp=box["mid"]; sl=round(price-sl_dist, 2)
         risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
+        # ── AI Validator ──────────────────────────────────────
+        ai_action, ai_mult = _ai_validate(
+            strategy="B", side="LONG",
+            entry_price=price, stop_loss=sl, take_profit=tp,
+            rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
+            box=box, has_divergence=bull_div,
+            trades=state_b.get("trades",[]), balance=balance,
+        )
+        if ai_action == "SKIP": return
+        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
+        # ─────────────────────────────────────────────────────
         order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
         if order_id:
             state_b["position"]={"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
