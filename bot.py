@@ -80,11 +80,11 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                 f"{reason[:100]}"
             )
         if AI_SHADOW_MODE:
-            return "GO", 1.0   # shadow: πάντα εκτέλεση κανονικά
-        return action, mult
+            return "GO", 1.0, result   # shadow: εκτέλεση κανονικά αλλά επιστρέφει result για DB
+        return action, mult, result
     except Exception as e:
         log.error(f"[AIValidator] Error: {e} — defaulting to GO")
-        return "GO", 1.0
+        return "GO", 1.0, None
 
 # -- LOGGING ------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1018,7 +1018,7 @@ def run_strategy_a():
         score, summary = ai_news_score(headlines, "SHORT", price, box)
         send_telegram(f"📰 <b>[A] News SHORT</b>\nScore:{score} | {summary}")
         # ── AI Validator ──────────────────────────────────────
-        ai_action, ai_mult = _ai_validate(
+        ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="A", side="SHORT",
             entry_price=price, stop_loss=sl, take_profit=tp,
             rsi_15m=rt.rsi_15m, rsi_1h=rsi,
@@ -1033,7 +1033,8 @@ def run_strategy_a():
         if order_id:
             state["position"] = {"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bear_div}
+                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bear_div,
+                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE}
             state["last_signal"]="SHORT"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🔴 <b>[A] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bear_div else 'Normal'}")
@@ -1054,7 +1055,7 @@ def run_strategy_a():
         score, summary = ai_news_score(headlines, "LONG", price, box)
         send_telegram(f"📰 <b>[A] News LONG</b>\nScore:{score} | {summary}")
         # ── AI Validator ──────────────────────────────────────
-        ai_action, ai_mult = _ai_validate(
+        ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="A", side="LONG",
             entry_price=price, stop_loss=sl, take_profit=tp,
             rsi_15m=rt.rsi_15m, rsi_1h=rsi,
@@ -1069,7 +1070,8 @@ def run_strategy_a():
         if order_id:
             state["position"] = {"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bull_div}
+                                  "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bull_div,
+                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE}
             state["last_signal"]="LONG"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🟢 <b>[A] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bull_div else 'Normal'}")
@@ -1193,7 +1195,7 @@ def run_strategy_b():
         risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
         # ── AI Validator ──────────────────────────────────────
-        ai_action, ai_mult = _ai_validate(
+        ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="B", side="SHORT",
             entry_price=price, stop_loss=sl, take_profit=tp,
             rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
@@ -1222,7 +1224,7 @@ def run_strategy_b():
         risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
         # ── AI Validator ──────────────────────────────────────
-        ai_action, ai_mult = _ai_validate(
+        ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="B", side="LONG",
             entry_price=price, stop_loss=sl, take_profit=tp,
             rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
