@@ -17,28 +17,55 @@ from collections import deque
 from datetime import datetime, timezone
 import anthropic
 from config import *
-from database import init_db, seed_if_empty, db_load_state, db_save_state, db_save_trade
+from database import init_db, seed_if_empty, db_load_state, db_save_state, db_save_trade, db_get_user_ai_settings
 
 # ── AI Validator ─────────────────────────────────────────────────
-# SHADOW_MODE=True: καταγράφει αλλά ΔΕΝ επηρεάζει trades
-# Άλλαξε σε False για να ενεργοποιήσεις το filter
-AI_VALIDATOR_ENABLED = os.environ.get("AI_VALIDATOR_ENABLED", "true").lower() == "true"
-AI_SHADOW_MODE       = os.environ.get("AI_SHADOW_MODE", "true").lower() == "true"
+# Master switches (env vars) — αν OFF παντού, AI απενεργοποιείται για ΟΛΟΥΣ
+# Per-user settings στη DB υπερισχύουν αν master = ON
+AI_VALIDATOR_MASTER  = os.environ.get("AI_VALIDATOR_ENABLED", "true").lower() == "true"
+AI_SHADOW_MASTER     = os.environ.get("AI_SHADOW_MODE", "true").lower() == "true"
+
+# Κρατάμε τα παλιά ονόματα για backwards compat με τυχόν άλλα modules
+AI_VALIDATOR_ENABLED = AI_VALIDATOR_MASTER
+AI_SHADOW_MODE       = AI_SHADOW_MASTER
 
 def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                  rsi_15m, rsi_1h, box, has_divergence, trades, balance,
-                 initial_balance=10000.0, candles_4h=None, extra=None):
+                 initial_balance=10000.0, candles_4h=None, extra=None,
+                 user_id=1):
     """
-    Καλεί το AI Validator και επιστρέφει (action, size_multiplier).
-    Σε shadow mode: πάντα επιστρέφει GO/1.0 αλλά καταγράφει στα logs.
+    Καλεί το AI Validator. Επιστρέφει (action, size_multiplier, result_obj).
+    
+    Λογική απόφασης (cascade):
+      1. Master OFF       → return GO (κανείς δεν τρέχει AI)
+      2. User off         → return GO (αυτός ο user δεν θέλει AI)
+      3. Shadow (any)     → AI τρέχει, logs, αλλά return GO
+      4. Normal          → AI τρέχει και η απόφαση εφαρμόζεται
     """
-    if not AI_VALIDATOR_ENABLED:
-        return "GO", 1.0
+    # ── 1. Master switch ─────────────────────────────────────
+    if not AI_VALIDATOR_MASTER:
+        return "GO", 1.0, None
+    
+    # ── 2. Per-user settings (από DB) ────────────────────────
+    try:
+        user_ai = db_get_user_ai_settings(user_id)
+    except Exception as e:
+        log.warning(f"[AIValidator] Could not read user settings: {e} — using defaults")
+        user_ai = {"ai_validator_enabled": True, "ai_shadow_mode": True}
+    
+    if not user_ai["ai_validator_enabled"]:
+        log.debug(f"[AIValidator] user_id={user_id} has AI disabled — skipping")
+        return "GO", 1.0, None
+    
+    # ── 3. Shadow mode (master OR user) ──────────────────────
+    # Αν είτε ο master είτε ο user έχει shadow ON → shadow mode
+    shadow_active = AI_SHADOW_MASTER or user_ai["ai_shadow_mode"]
+    
     try:
         from ai_validator import validate_signal
         result = validate_signal(
             strategy     = strategy,
-            user_id      = 1,
+            user_id      = user_id,
             symbol       = BITGET_SYMBOL,
             side         = side,
             entry_price  = entry_price,
@@ -61,26 +88,26 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                 "risk_percent":    RISK_PER_TRADE * 100,
                 "trading_mode":    TRADING_MODE,
             },
-            shadow_mode = AI_SHADOW_MODE,
+            shadow_mode = shadow_active,
         )
         action = result.action
         mult   = result.size_multiplier
         log.info(
-            f"[AIValidator] [{strategy}] {side} → {action} "
+            f"[AIValidator] [{strategy}] user={user_id} {side} → {action} "
             f"(conf={result.confidence:.2f}, {result.processing_time_ms}ms) "
-            f"{'[SHADOW]' if AI_SHADOW_MODE else '[ACTIVE]'}"
+            f"{'[SHADOW]' if shadow_active else '[ACTIVE]'}"
         )
         # Telegram notification για σημαντικές αποφάσεις
-        if action in ("SKIP", "DOUBLE_SIZE") or (action == "REDUCE_SIZE" and not AI_SHADOW_MODE):
-            shadow_tag = " [SHADOW]" if AI_SHADOW_MODE else ""
+        if action in ("SKIP", "DOUBLE_SIZE") or (action == "REDUCE_SIZE" and not shadow_active):
+            shadow_tag = " [SHADOW]" if shadow_active else ""
             reason = list(result.reasoning.values())[0] if result.reasoning else ""
             send_telegram(
                 f"🤖 <b>[AI{shadow_tag}] {strategy} {action}</b>\n"
                 f"{side} @ ${entry_price:,.0f}\n"
                 f"{reason[:100]}"
             )
-        if AI_SHADOW_MODE:
-            return "GO", 1.0, result   # shadow: εκτέλεση κανονικά αλλά επιστρέφει result για DB
+        if shadow_active:
+            return "GO", 1.0, result   # shadow: εκτέλεση κανονικά
         return action, mult, result
     except Exception as e:
         log.error(f"[AIValidator] Error: {e} — defaulting to GO")
