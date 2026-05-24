@@ -30,7 +30,8 @@ def get_trades(strategy: str) -> list:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT type, entry, close, pnl, result, note,
-                       divergence, news_score, trade_time as time, id
+                       divergence, news_score, trade_time as time, id,
+                       ai_action, ai_confidence, ai_reasoning, ai_shadow_mode
                 FROM trades
                 WHERE strategy = %s
                 ORDER BY id ASC
@@ -67,6 +68,10 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
             "equity_curve": [], "pnl_by_hour": {}, "pnl_by_day": {},
             "top_hours": [], "bottom_hours": [], "best_days": [], "worst_days": [],
             "consecutive_wins": 0, "consecutive_losses": 0,
+            "sharpe_ratio": 0, "expectancy": 0, "recovery_factor": 0, "max_drawdown_usd": 0,
+            "ai_stats": {"total_ai_trades":0,"skips":0,"skip_accuracy":0,"doubles":0,
+                         "double_accuracy":0,"reduces":0,"goes":0,"saved_pnl":0,
+                         "shadow_trades":0,"active_trades":0,"skip_correct":0},
         }
 
     wins   = [t for t in trades if t["result"] == "WIN" and float(t["pnl"] or 0) > 0]
@@ -156,7 +161,73 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
     best_days  = day_wr[:2]
     worst_days = day_wr[-2:][::-1] if len(day_wr) >= 2 else []
 
-    # Consecutive wins/losses
+    # ── Sharpe Ratio (annualized, risk-free=0) ──────────────────
+    import math
+    daily_returns = []
+    running = initial_balance
+    for t in trades:
+        pnl = float(t["pnl"] or 0)
+        ret = pnl / running if running > 0 else 0
+        daily_returns.append(ret)
+        running += pnl
+
+    sharpe = 0.0
+    if len(daily_returns) >= 5:
+        avg_r = sum(daily_returns) / len(daily_returns)
+        std_r = math.sqrt(sum((r - avg_r)**2 for r in daily_returns) / len(daily_returns))
+        if std_r > 0:
+            sharpe = round(avg_r / std_r * math.sqrt(252), 2)
+
+    # ── Expectancy ────────────────────────────────────────────
+    win_rate_dec = len([t for t in trades if t["result"] == "WIN"]) / total if total else 0
+    expectancy   = round(win_rate_dec * avg_win + (1 - win_rate_dec) * avg_loss, 2)
+
+    # ── Recovery Factor ───────────────────────────────────────
+    recovery_factor = round(sum(pnls) / max_dd_abs, 2) if (max_dd_abs := max(
+        (initial_balance + sum([float(t["pnl"] or 0) for t in trades[:i+1]]) - peak
+         for i, t in enumerate(trades)
+         for peak in [max(initial_balance + sum([float(t2["pnl"] or 0) for t2 in trades[:j+1]])
+                         for j in range(i+1))]
+    ), default=0) if (lambda: True)() else 1) > 0 else 0
+
+    # Απλούστερος υπολογισμός recovery factor
+    net_profit  = sum(pnls)
+    max_dd_usd  = round(max_dd / 100 * initial_balance, 2)
+    recovery_factor = round(net_profit / max_dd_usd, 2) if max_dd_usd > 0 else 0
+
+    # ── AI Performance Stats ──────────────────────────────────
+    ai_trades    = [t for t in trades if t.get("ai_action")]
+    ai_skips     = [t for t in ai_trades if t.get("ai_action") == "SKIP"]
+    ai_doubles   = [t for t in ai_trades if t.get("ai_action") == "DOUBLE_SIZE"]
+    ai_reduces   = [t for t in ai_trades if t.get("ai_action") == "REDUCE_SIZE"]
+    ai_goes      = [t for t in ai_trades if t.get("ai_action") == "GO"]
+
+    # SKIP accuracy: πόσα από τα "SKIP" ήταν όντως losses
+    skip_correct = len([t for t in ai_skips if t["result"] == "LOSS"])
+    skip_accuracy = round(skip_correct / len(ai_skips) * 100, 1) if ai_skips else 0
+
+    # DOUBLE accuracy: πόσα από τα "DOUBLE_SIZE" ήταν wins
+    double_correct  = len([t for t in ai_doubles if t["result"] == "WIN"])
+    double_accuracy = round(double_correct / len(ai_doubles) * 100, 1) if ai_doubles else 0
+
+    # Saved PnL: πόσο θα χάναμε αν δεν ακούγαμε τα SKIP
+    saved_pnl = round(sum(float(t["pnl"] or 0) for t in ai_skips if t["result"] == "LOSS"), 2)
+
+    ai_stats = {
+        "total_ai_trades":  len(ai_trades),
+        "skips":            len(ai_skips),
+        "skip_accuracy":    skip_accuracy,
+        "skip_correct":     skip_correct,
+        "doubles":          len(ai_doubles),
+        "double_accuracy":  double_accuracy,
+        "reduces":          len(ai_reduces),
+        "goes":             len(ai_goes),
+        "saved_pnl":        saved_pnl,
+        "shadow_trades":    len([t for t in ai_trades if t.get("ai_shadow_mode")]),
+        "active_trades":    len([t for t in ai_trades if not t.get("ai_shadow_mode")]),
+    }
+
+    # ── Consecutive wins/losses
     max_cw = max_cl = cw = cl = 0
     for t in trades:
         if t["result"] == "WIN":
@@ -189,6 +260,11 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
         "consecutive_losses":  max_cl,
         "gross_profit":        round(gross_profit, 2),
         "gross_loss":          round(gross_loss, 2),
+        "sharpe_ratio":        sharpe,
+        "expectancy":          expectancy,
+        "recovery_factor":     recovery_factor,
+        "max_drawdown_usd":    max_dd_usd,
+        "ai_stats":            ai_stats,
     }
 
 # =================================================================
@@ -506,7 +582,42 @@ function renderStrategy(s, d) {
       ${statCard('Worst Trade', fmt(stats.worst_trade), 'var(--red)')}
       ${statCard('Max Cons. Wins', stats.consecutive_wins, color)}
       ${statCard('Max Cons. Loss', stats.consecutive_losses, 'var(--red)')}
+      ${statCard('Sharpe Ratio', (stats.sharpe_ratio||0).toFixed(2), (stats.sharpe_ratio||0)>=2?'var(--green)':(stats.sharpe_ratio||0)>=1?'var(--yellow)':'var(--red)', '>2=great >1=good')}
+      ${statCard('Expectancy', fmt(stats.expectancy||0), (stats.expectancy||0)>=0?'var(--green)':'var(--red)', 'avg $ per trade')}
+      ${statCard('Recovery', (stats.recovery_factor||0).toFixed(2), (stats.recovery_factor||0)>=2?'var(--green)':'var(--yellow)', 'profit/max drawdown')}
     </div>
+
+    <!-- AI VALIDATOR SECTION -->
+    ${(() => {
+      const ai = stats.ai_stats || {};
+      if (!ai.total_ai_trades) return `
+        <div style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.15);border-radius:10px;padding:16px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:600;color:var(--a);letter-spacing:1px;margin-bottom:8px;">AI VALIDATOR</div>
+          <div style="font-size:12px;color:var(--text2);">Shadow mode ενεργό — δεν υπάρχουν ακόμα trades με AI commentary.</div>
+        </div>`;
+      const skipColor = ai.skip_accuracy>=60?'var(--green)':ai.skip_accuracy>=40?'var(--yellow)':'var(--red)';
+      const dblColor  = ai.double_accuracy>=60?'var(--green)':'var(--yellow)';
+      const rec = ai.skip_accuracy>=60
+        ? `<div style="margin-top:10px;font-size:11px;color:#4ade80;background:rgba(74,222,128,0.05);padding:8px 12px;border-radius:6px;">✅ SKIP accuracy ${ai.skip_accuracy}% — Μπορείς να απενεργοποιήσεις το shadow mode</div>`
+        : ai.skips>=5
+          ? `<div style="margin-top:10px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.05);padding:8px 12px;border-radius:6px;">⚠️ SKIP accuracy ${ai.skip_accuracy}% — Συνέχισε σε shadow mode, χρειάζεται βελτίωση</div>`
+          : `<div style="margin-top:10px;font-size:11px;color:var(--text2);">📊 Χρειάζονται 5+ SKIP decisions για αξιόπιστη μέτρηση (τώρα: ${ai.skips})</div>`;
+      return `
+        <div style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.15);border-radius:10px;padding:16px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--a);letter-spacing:1px;">AI VALIDATOR — ${ai.shadow_trades} SHADOW · ${ai.active_trades} ACTIVE</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;">
+            ${statCard('AI Trades', ai.total_ai_trades, 'var(--a)')}
+            ${statCard('SKIP Accuracy', (ai.skip_accuracy||0)+'%', skipColor, ai.skips+' skips · '+ai.skip_correct+' correct')}
+            ${statCard('DOUBLE Acc.', (ai.double_accuracy||0)+'%', dblColor, ai.doubles+' doubles')}
+            ${statCard('Saved Loss', fmt(ai.saved_pnl||0), 'var(--green)', 'από SKIP decisions')}
+            ${statCard('GO', ai.goes||0, 'var(--green)')}
+            ${statCard('REDUCE', ai.reduces||0, 'var(--yellow)')}
+          </div>
+          ${rec}
+        </div>`;
+    })()}
 
     <!-- CHARTS ROW 1 -->
     <div class="grid-2">
