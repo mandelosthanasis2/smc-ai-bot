@@ -238,6 +238,10 @@ SETTINGS_HTML = """
 .request-btn { background: rgba(59,142,243,0.15); border: 0.5px solid rgba(59,142,243,0.4); color: var(--blue); border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer; }
 .approved-badge { background: #14532d; color: #4ade80; padding: 6px 14px; border-radius: 6px; font-size: 12px; }
 .pending-badge { background: #1c1410; color: #fb923c; padding: 6px 14px; border-radius: 6px; font-size: 12px; }
+.ai-badge { display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:600; }
+.ai-badge-shadow { background:rgba(250,204,21,0.1);color:#facc15;border:0.5px solid rgba(250,204,21,0.3); }
+.ai-badge-active { background:rgba(74,222,128,0.1);color:#4ade80;border:0.5px solid rgba(74,222,128,0.3); }
+.ai-badge-off    { background:rgba(255,255,255,0.05);color:#4a6580;border:0.5px solid #1e2a3a; }
 @media(max-width:700px){.sidebar{display:none;}.main{padding:16px;}}
 </style></head><body>
 <div class="layout">
@@ -328,6 +332,63 @@ SETTINGS_HTML = """
       </div>
 
       <div class="section">
+        <div class="section-title">AI VALIDATOR</div>
+        <div class="settings-card">
+
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-title">AI Validator</div>
+              <div class="settings-item-sub">Αναλύει κάθε signal πριν εκτελεστεί</div>
+            </div>
+            <div class="toggle-wrap">
+              <span>Off</span>
+              <label style="position:relative;display:inline-block;width:36px;height:20px;">
+                <input type="checkbox" name="ai_validator_enabled" style="opacity:0;width:0;height:0;"
+                  {% if s.get('ai_validator_enabled', True) %}checked{% endif %}
+                  onchange="updateAiBadge()">
+                <span id="ai-enabled-track" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:{% if s.get('ai_validator_enabled', True) %}#4ade80{% else %}#1e3a5a{% endif %};border-radius:10px;transition:0.2s;"></span>
+              </label>
+              <span>On</span>
+            </div>
+          </div>
+
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-title">Shadow Mode</div>
+              <div class="settings-item-sub">Καταγράφει αποφάσεις χωρίς να τις εφαρμόζει</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="shadow-badge" class="ai-badge {% if s.get('ai_shadow_mode', True) %}ai-badge-shadow{% else %}ai-badge-active{% endif %}">
+                {% if s.get('ai_shadow_mode', True) %}👁 SHADOW{% else %}⚡ ACTIVE{% endif %}
+              </span>
+              <div class="toggle-wrap">
+                <span>Active</span>
+                <label style="position:relative;display:inline-block;width:36px;height:20px;">
+                  <input type="checkbox" name="ai_shadow_mode" style="opacity:0;width:0;height:0;"
+                    {% if s.get('ai_shadow_mode', True) %}checked{% endif %}
+                    onchange="updateShadowBadge(this)">
+                  <span id="shadow-track" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:{% if s.get('ai_shadow_mode', True) %}#4ade80{% else %}#1e3a5a{% endif %};border-radius:10px;transition:0.2s;"></span>
+                </label>
+                <span>Shadow</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-item" style="background:rgba(250,204,21,0.03);">
+            <div class="settings-item-left" style="gap:6px;">
+              <div class="settings-item-title" style="font-size:11px;color:#facc15;">⚠️ Πότε να απενεργοποιήσεις το Shadow Mode</div>
+              <div class="settings-item-sub" style="line-height:1.6;">
+                Άφησε Shadow Mode ON για τουλάχιστον <strong style="color:var(--text);">50 trades</strong>.<br>
+                Μετά σύγκρινε: trades που ο AI θα έκοβε (SKIP) — ήταν losses;<br>
+                Αν ναι σε > 60%, ενεργοποίησε το AI filter.
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="section">
         <div class="section-title">TRADING MODE</div>
         <div class="settings-card">
           <div class="settings-item">
@@ -375,6 +436,19 @@ function requestLive() {
     .then(r => r.json())
     .then(d => { if(d.ok) location.reload(); });
 }
+function updateShadowBadge(cb) {
+  const badge = document.getElementById('shadow-badge');
+  const track = document.getElementById('shadow-track');
+  if (cb.checked) {
+    badge.className = 'ai-badge ai-badge-shadow';
+    badge.textContent = '👁 SHADOW';
+    track.style.background = '#4ade80';
+  } else {
+    badge.className = 'ai-badge ai-badge-active';
+    badge.textContent = '⚡ ACTIVE';
+    track.style.background = '#1e3a5a';
+  }
+}
 </script>
 </body></html>
 """
@@ -385,27 +459,36 @@ def settings():
     user_id = session['user_id']
     from database import get_user_by_id
     user = get_user_by_id(user_id) or {}
-    s = get_user_settings(user_id) or {
-        'bitget_api_key': '', 'bitget_secret_key': '', 'bitget_passphrase': '',
-        'telegram_token': '', 'telegram_chat_id': '',
-        'risk_percent': 2.0,
-        'strategy_a': True, 'strategy_b': True, 'strategy_c': True, 'strategy_d': True,
-        'trading_mode': 'paper',
-    }
+    s = get_user_settings(user_id) or {}
+    s.setdefault('bitget_api_key', '')
+    s.setdefault('bitget_secret_key', '')
+    s.setdefault('bitget_passphrase', '')
+    s.setdefault('telegram_token', '')
+    s.setdefault('telegram_chat_id', '')
+    s.setdefault('risk_percent', 2.0)
+    s.setdefault('strategy_a', True)
+    s.setdefault('strategy_b', True)
+    s.setdefault('strategy_c', True)
+    s.setdefault('strategy_d', True)
+    s.setdefault('trading_mode', 'paper')
+    s.setdefault('ai_validator_enabled', True)
+    s.setdefault('ai_shadow_mode', True)
     error = success = None
     if request.method == 'POST':
         new_settings = {
-            'bitget_api_key':    request.form.get('bitget_api_key', '').strip(),
-            'bitget_secret_key': request.form.get('bitget_secret_key', '').strip(),
-            'bitget_passphrase': request.form.get('bitget_passphrase', '').strip(),
-            'telegram_token':    request.form.get('telegram_token', '').strip(),
-            'telegram_chat_id':  request.form.get('telegram_chat_id', '').strip(),
-            'risk_percent':      float(request.form.get('risk_percent', 2.0)),
-            'strategy_a':        'strategy_a' in request.form,
-            'strategy_b':        'strategy_b' in request.form,
-            'strategy_c':        'strategy_c' in request.form,
-            'strategy_d':        'strategy_d' in request.form,
-            'trading_mode':      s.get('trading_mode', 'paper'),
+            'bitget_api_key':       request.form.get('bitget_api_key', '').strip(),
+            'bitget_secret_key':    request.form.get('bitget_secret_key', '').strip(),
+            'bitget_passphrase':    request.form.get('bitget_passphrase', '').strip(),
+            'telegram_token':       request.form.get('telegram_token', '').strip(),
+            'telegram_chat_id':     request.form.get('telegram_chat_id', '').strip(),
+            'risk_percent':         float(request.form.get('risk_percent', 2.0)),
+            'strategy_a':           'strategy_a' in request.form,
+            'strategy_b':           'strategy_b' in request.form,
+            'strategy_c':           'strategy_c' in request.form,
+            'strategy_d':           'strategy_d' in request.form,
+            'trading_mode':         s.get('trading_mode', 'paper'),
+            'ai_validator_enabled': 'ai_validator_enabled' in request.form,
+            'ai_shadow_mode':       'ai_shadow_mode' in request.form,
         }
         if save_user_settings(user_id, new_settings):
             s = new_settings
