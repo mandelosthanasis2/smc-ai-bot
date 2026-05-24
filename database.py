@@ -570,6 +570,39 @@ def db_save_trade_ai(trade_id_or_latest: str, strategy: str, ai_action: str,
     finally:
         conn.close()
 
+def db_get_user_ai_settings(user_id: int = 1) -> dict:
+    """
+    Fast helper — επιστρέφει ΜΟΝΟ τα AI settings ενός user.
+    Καλείται από bot.py σε κάθε trade signal, οπότε πρέπει να είναι γρήγορο.
+    
+    Returns:
+        dict με ai_validator_enabled και ai_shadow_mode.
+        Defaults: validator=True, shadow=True (ασφαλές default).
+    """
+    conn = get_conn()
+    if not conn:
+        return {"ai_validator_enabled": True, "ai_shadow_mode": True}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ai_validator_enabled, ai_shadow_mode
+                FROM user_settings
+                WHERE user_id = %s
+            """, (user_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"ai_validator_enabled": True, "ai_shadow_mode": True}
+            return {
+                "ai_validator_enabled": bool(row[0]) if row[0] is not None else True,
+                "ai_shadow_mode":       bool(row[1]) if row[1] is not None else True,
+            }
+    except Exception as e:
+        log.error(f"db_get_user_ai_settings error: {e}")
+        return {"ai_validator_enabled": True, "ai_shadow_mode": True}
+    finally:
+        conn.close()
+
+
 def seed_if_empty(strategy: str, saved_state: dict, user_id: int = 1):
     conn = get_conn()
     if not conn: return
