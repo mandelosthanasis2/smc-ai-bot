@@ -461,6 +461,19 @@ def _wh_d(sig, price=None, data=None):
     sl=round(sl,2); tp1=round(tp1,2); tp2=round(tp2,2)
     cf=data.get('confluence','normal')=='strong'
     qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
+    # ── AI Validator ──────────────────────────────────────────
+    from bot import _ai_validate, rt as _rt
+    _ai_act,_ai_mult = _ai_validate(
+        strategy="D", side=sig,
+        entry_price=p, stop_loss=sl, take_profit=tp1,
+        rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
+        box=None, has_divergence=cf,
+        trades=state_d.get("trades",[]), balance=state_d["balance"],
+        extra={"tp1":tp1,"tp2":tp2,"confluence":data.get("confluence","normal")},
+    )
+    if _ai_act == "SKIP": return
+    if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
+    # ─────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
     if oid:
         state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False}
@@ -523,6 +536,18 @@ def _wh_c(sig, price=None, data=None):
     if sig=='SHORT' and (tp>=p or sl<=p): return
     if sig=='LONG'  and (tp<=p or sl>=p): return
     qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
+    # ── AI Validator ──────────────────────────────────────────
+    from bot import _ai_validate, rt as _rt
+    _ai_act,_ai_mult = _ai_validate(
+        strategy="C", side=sig,
+        entry_price=p, stop_loss=sl, take_profit=tp,
+        rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
+        box=state_c.get("box"), has_divergence=False,
+        trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
+    )
+    if _ai_act == "SKIP": return
+    if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
+    # ─────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
         state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid}
