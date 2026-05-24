@@ -651,6 +651,7 @@ function renderStrategy(s, d) {
           <thead><tr>
             <th>#</th><th>Time</th><th>Type</th><th>Entry</th><th>Close</th>
             <th>P&L</th><th>Result</th><th>Note</th><th>Div</th>
+              <th>AI</th>
           </tr></thead>
           <tbody>
             ${[...trades].reverse().slice(0,100).map((t,i) => `
@@ -664,6 +665,27 @@ function renderStrategy(s, d) {
                 <td><span class="pill pill-${(t.result||'').toLowerCase()}">${t.result}</span></td>
                 <td class="text-dim" style="font-size:10px;">${t.note||'—'}</td>
                 <td>${t.divergence ? '<span class="text-yellow">🔥</span>' : '<span class="text-dim">—</span>'}</td>
+                <td>${(() => {
+                  const a = t.ai_action;
+                  if (!a) return '<span class="text-dim" style="font-size:9px;">—</span>';
+                  const colors = {GO:'#10b981',SKIP:'#ef4444',REDUCE_SIZE:'#f59e0b',DOUBLE_SIZE:'#3b82f6'};
+                  const icons  = {GO:'✅',SKIP:'🚫',REDUCE_SIZE:'📉',DOUBLE_SIZE:'🚀'};
+                  const labels = {GO:'GO',SKIP:'SKIP',REDUCE_SIZE:'½x',DOUBLE_SIZE:'2x'};
+                  const col    = colors[a] || '#8892a8';
+                  const shadow = t.ai_shadow_mode ? ' title="Shadow mode — non eseguito"' : '';
+                  const conf   = t.ai_confidence ? Math.round(t.ai_confidence*100)+'%' : '';
+                  const reason = t.ai_reasoning ? t.ai_reasoning.replace(/"/g,'&quot;') : '';
+                  const opacity = t.ai_shadow_mode ? '0.6' : '1';
+                  return `<span
+                    style="cursor:pointer;font-size:9px;font-weight:600;color:${col};opacity:${opacity};white-space:nowrap;"
+                    title="${reason}"
+                    ${shadow}
+                    onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'"
+                  >${icons[a]||''} ${labels[a]||a}${conf?' '+conf:''}${t.ai_shadow_mode?' 👁':''}</span>
+                  <div style="display:none;position:absolute;z-index:999;max-width:280px;background:#111828;border:1px solid #1a2540;border-radius:8px;padding:10px;font-size:10px;color:#8892a8;line-height:1.5;margin-top:4px;">
+                    ${reason || 'No reasoning available'}
+                  </div>`;
+                })()}</td>
               </tr>
             `).join('')}
           </tbody>
