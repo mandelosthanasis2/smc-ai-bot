@@ -1,15 +1,17 @@
 """
-AI Validator — Κύρια λογική
-═══════════════════════════
-Συναρμολογεί pre-filter + agents και επιστρέφει την τελική απόφαση
-στο bot.py.
+AI Validator — Κύρια λογική (Φάση 3.3)
+═══════════════════════════════════════
+Συναρμολογεί pre-filter + agents και επιστρέφει την τελική απόφαση.
 
-Στη Φάση 3.1, αυτό είναι STUB — επιστρέφει πάντα GO με size_multiplier=1.0.
-Έτσι μπορούμε να ελέγξουμε ότι το integration δουλεύει πριν βάλουμε
-πραγματική λογική.
+Pipeline:
+  1. Pre-filter  (hard rules, χωρίς Claude)
+  2. News Agent  (macro context, cached 15min)
+  3. Technical Agent (setup analysis, per-trade)
+  4. Coordinator (τελική απόφαση GO/SKIP/REDUCE/DOUBLE)
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,30 +19,11 @@ from typing import Literal, Optional
 
 log = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════
-# Data Classes
-# ═══════════════════════════════════════════════════════════════
-
 DecisionType = Literal["GO", "SKIP", "REDUCE_SIZE", "DOUBLE_SIZE"]
 
 
 @dataclass
 class ValidationResult:
-    """
-    Το αποτέλεσμα που επιστρέφεται στο bot.py.
-    
-    Attributes:
-        action: Η τελική απόφαση (GO, SKIP, REDUCE_SIZE, DOUBLE_SIZE)
-        size_multiplier: Πολλαπλασιαστής για το position size
-                         GO=1.0, REDUCE_SIZE=0.5, DOUBLE_SIZE=2.0, SKIP=0.0
-        confidence: 0.0 - 1.0, πόσο σίγουρο είναι το AI
-        reasoning: Dict με αναλυτικό σκεπτικό από κάθε agent
-        knowledge_references: Λίστα με αναφορές από τα 19 βιβλία
-        warnings: Λίστα από warnings που πρέπει να εμφανιστούν
-        source: 'pre_filter' ή 'ai_agents' ή 'fallback' (αν AI έπεσε)
-        processing_time_ms: Πόση ώρα πήρε η ανάλυση
-        timestamp: Πότε έγινε η απόφαση
-    """
     action: DecisionType
     size_multiplier: float = 1.0
     confidence: float = 0.0
@@ -50,9 +33,8 @@ class ValidationResult:
     source: str = "stub"
     processing_time_ms: int = 0
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
+
     def to_dict(self) -> dict:
-        """Για αποθήκευση στο DB και Telegram messages."""
         return {
             "action": self.action,
             "size_multiplier": self.size_multiplier,
@@ -64,9 +46,8 @@ class ValidationResult:
             "processing_time_ms": self.processing_time_ms,
             "timestamp": self.timestamp,
         }
-    
+
     def to_short_string(self) -> str:
-        """Για logs — σύντομη γραμμή."""
         return (
             f"{self.action} "
             f"(conf={self.confidence:.2f}, "
@@ -75,10 +56,6 @@ class ValidationResult:
             f"{self.processing_time_ms}ms)"
         )
 
-
-# ═══════════════════════════════════════════════════════════════
-# Main Function — Καλείται από το bot.py
-# ═══════════════════════════════════════════════════════════════
 
 def validate_signal(
     strategy: str,
@@ -93,98 +70,125 @@ def validate_signal(
     shadow_mode: bool = False,
 ) -> ValidationResult:
     """
-    Κύρια συνάρτηση AI validation. Καλείται από το bot.py πριν από
-    κάθε place_order.
-    
-    Args:
-        strategy: Όνομα στρατηγικής ('A', 'B', 'C', 'D')
-        user_id: ID χρήστη (από users table)
-        symbol: Trading pair (π.χ. 'BTCUSDT')
-        side: 'LONG' ή 'SHORT'
-        entry_price: Τιμή εισόδου
-        stop_loss: Stop loss τιμή
-        take_profit: Take profit τιμή
-        context: Dict με market context data (RSI, levels, volume, κλπ)
-        user_settings: Dict με user settings (risk_percent, balance, mode)
-        shadow_mode: Αν True, καταγράφει αλλά δεν εφαρμόζει την απόφαση
-    
-    Returns:
-        ValidationResult με την τελική απόφαση
+    Κύρια συνάρτηση. Καλείται από bot.py πριν από κάθε place_order.
     """
     start_time = time.time()
-    
+
     log.info(
-        f"[AI Validator] Strategy={strategy} User={user_id} "
-        f"Symbol={symbol} Side={side} Entry={entry_price}"
+        f"[Validator] Strategy={strategy} User={user_id} "
+        f"{side} @ {entry_price:.2f} SL={stop_loss:.2f} TP={take_profit:.2f}"
     )
-    
-    # ────────────────────────────────────────────────────────────
-    # ΦΑΣΗ 3.1 — STUB: Πάντα GO
-    # ────────────────────────────────────────────────────────────
-    # Στις επόμενες φάσεις θα προστεθούν:
-    #   1. Pre-filter (Φάση 3.2)
-    #   2. AI Agents (Φάση 3.3)
-    #   3. Decision logic (Φάση 3.4)
-    # ────────────────────────────────────────────────────────────
-    
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    # ── 1. Pre-Filter ────────────────────────────────────────
+    try:
+        from .pre_filter import run_pre_filter
+        pf = run_pre_filter(
+            strategy          = strategy,
+            side              = side,
+            entry_price       = entry_price,
+            stop_loss         = stop_loss,
+            take_profit       = take_profit,
+            rsi_15m           = context.get("rsi_15m", 50.0),
+            rsi_1h            = context.get("rsi_1h", 50.0),
+            current_price     = context.get("current_price", entry_price),
+            last_price_update = context.get("last_price_update", time.time()),
+            trades            = context.get("trades", []),
+            balance           = user_settings.get("balance", 10000),
+            initial_balance   = user_settings.get("initial_balance", 10000),
+            has_divergence    = context.get("has_divergence", False),
+            box               = context.get("box", {}),
+            candles_4h        = context.get("candles_4h", []),
+            extra_context     = context.get("extra", {}),
+        )
+
+        if pf.skip:
+            elapsed = int((time.time() - start_time) * 1000)
+            return ValidationResult(
+                action="SKIP",
+                size_multiplier=0.0,
+                confidence=0.95,
+                reasoning={"pre_filter": pf.skip_reason},
+                source="pre_filter",
+                processing_time_ms=elapsed,
+            )
+    except Exception as e:
+        log.error(f"[Validator] Pre-filter error: {e}")
+        pf = type("PF", (), {"skip": False, "auto_reduce": False, "auto_reduce_reason": "", "context_data": {}})()
+
+    # ── 2. News Agent ────────────────────────────────────────
+    try:
+        from .agents.news_agent import analyze_news
+        news = analyze_news(
+            side              = side,
+            entry_price       = entry_price,
+            anthropic_api_key = api_key,
+        )
+    except Exception as e:
+        log.error(f"[Validator] News agent error: {e}")
+        from .agents.news_agent import NewsAnalysis
+        news = NewsAnalysis(score=0, verdict="NEUTRAL", summary=f"Error: {e}")
+
+    # ── 3. Technical Agent ───────────────────────────────────
+    try:
+        from .agents.technical_agent import analyze_technical
+        technical = analyze_technical(
+            strategy          = strategy,
+            side              = side,
+            entry_price       = entry_price,
+            stop_loss         = stop_loss,
+            take_profit       = take_profit,
+            risk_reward       = pf.context_data.get("risk_reward", 2.0),
+            rsi_15m           = context.get("rsi_15m", 50.0),
+            rsi_1h            = context.get("rsi_1h", 50.0),
+            box               = context.get("box", {}),
+            has_divergence    = context.get("has_divergence", False),
+            anthropic_api_key = api_key,
+            candles_4h        = context.get("candles_4h", []),
+            extra_context     = context.get("extra", {}),
+        )
+    except Exception as e:
+        log.error(f"[Validator] Technical agent error: {e}")
+        from .agents.technical_agent import TechnicalAnalysis
+        technical = TechnicalAnalysis(confluence_score=5, recommendation="GO", summary=f"Error: {e}")
+
+    # ── 4. Coordinator ───────────────────────────────────────
+    try:
+        from .agents.coordinator_agent import coordinate
+        coord = coordinate(
+            strategy          = strategy,
+            side              = side,
+            technical         = technical,
+            news              = news,
+            has_divergence    = context.get("has_divergence", False),
+            auto_reduce       = pf.auto_reduce,
+            anthropic_api_key = api_key,
+            trades            = context.get("trades", []),
+        )
+    except Exception as e:
+        log.error(f"[Validator] Coordinator error: {e}")
+        coord = type("C", (), {
+            "action": "GO", "size_multiplier": 1.0,
+            "confidence": 0.5, "reasoning": f"Error: {e}", "used_claude": False
+        })()
+
+    # ── 5. Assemble result ───────────────────────────────────
+    elapsed = int((time.time() - start_time) * 1000)
+
     result = ValidationResult(
-        action="GO",
-        size_multiplier=1.0,
-        confidence=1.0,
-        reasoning={
-            "stub": "Phase 3.1 stub — πάντα GO. Integration test only."
+        action          = coord.action,
+        size_multiplier = coord.size_multiplier,
+        confidence      = coord.confidence,
+        reasoning = {
+            "coordinator": coord.reasoning,
+            "technical":   f"Score={technical.confluence_score}/10 | {technical.summary}",
+            "news":        f"Score={news.score} | {news.verdict} | {news.summary}",
+            "pre_filter":  f"auto_reduce={pf.auto_reduce}" + (f" ({pf.auto_reduce_reason})" if pf.auto_reduce else ""),
         },
-        source="stub",
-        processing_time_ms=int((time.time() - start_time) * 1000),
+        source              = "ai_agents",
+        processing_time_ms  = elapsed,
     )
-    
-    log.info(f"[AI Validator] Decision: {result.to_short_string()}")
-    
+
+    log.info(f"[Validator] Final: {result.to_short_string()}")
     return result
-
-
-# ═══════════════════════════════════════════════════════════════
-# Self-test (για να σιγουρευτείς ότι το module δουλεύει)
-# ═══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    # Setup logging για να δούμε output
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
-    )
-    
-    print("\n" + "=" * 60)
-    print("AI Validator — Self Test (Φάση 3.1)")
-    print("=" * 60)
-    
-    # Δοκιμαστικό signal
-    test_result = validate_signal(
-        strategy="B",
-        user_id=1,
-        symbol="BTCUSDT",
-        side="LONG",
-        entry_price=65420.50,
-        stop_loss=65100.00,
-        take_profit=65900.00,
-        context={
-            "rsi_1h": 28.5,
-            "rsi_15m": 22.0,
-            "current_price": 65150,
-            "volume_spike": True,
-        },
-        user_settings={
-            "risk_percent": 2.0,
-            "balance": 18449,
-            "trading_mode": "PAPER",
-        },
-    )
-    
-    print(f"\nDecision: {test_result.action}")
-    print(f"Size Multiplier: {test_result.size_multiplier}")
-    print(f"Confidence: {test_result.confidence}")
-    print(f"Source: {test_result.source}")
-    print(f"Processing time: {test_result.processing_time_ms}ms")
-    print(f"\nReasoning: {test_result.reasoning}")
-    print(f"\nFull dict:\n{test_result.to_dict()}")
-    print("\n✅ Self-test passed!\n")
