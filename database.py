@@ -113,12 +113,30 @@ def init_db():
                 )
             """)
 
-            # Migration: προσθήκη user_id στα υπάρχοντα tables αν λείπει
+            # Migration: υπάρχοντα columns
             cur.execute("""
                 ALTER TABLE bot_state ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)
             """)
             cur.execute("""
                 ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)
+            """)
+
+            # Migration Φάση 3.5: AI Validator columns στο trades table
+            cur.execute("""
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS
+                    ai_action VARCHAR(20) DEFAULT NULL
+            """)
+            cur.execute("""
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS
+                    ai_confidence NUMERIC(4,2) DEFAULT NULL
+            """)
+            cur.execute("""
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS
+                    ai_reasoning TEXT DEFAULT NULL
+            """)
+            cur.execute("""
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS
+                    ai_shadow_mode BOOLEAN DEFAULT TRUE
             """)
 
         conn.commit()
@@ -395,7 +413,8 @@ def db_load_state(strategy: str, user_id: int = 1) -> dict | None:
 
             cur.execute("""
                 SELECT type, entry, close, pnl, result, note,
-                       divergence, news_score, trade_time as time
+                       divergence, news_score, trade_time as time,
+                       ai_action, ai_confidence, ai_reasoning, ai_shadow_mode
                 FROM trades
                 WHERE strategy = %s AND user_id = %s
                 ORDER BY id ASC
@@ -404,15 +423,19 @@ def db_load_state(strategy: str, user_id: int = 1) -> dict | None:
             trades = []
             for t in cur.fetchall():
                 trades.append({
-                    "type":       t["type"],
-                    "entry":      float(t["entry"]) if t["entry"] else 0,
-                    "close":      float(t["close"]) if t["close"] else 0,
-                    "pnl":        float(t["pnl"]) if t["pnl"] else 0,
-                    "result":     t["result"],
-                    "note":       t["note"] or "",
-                    "divergence": t["divergence"],
-                    "news_score": t["news_score"] or 0,
-                    "time":       t["time"] or "",
+                    "type":          t["type"],
+                    "entry":         float(t["entry"]) if t["entry"] else 0,
+                    "close":         float(t["close"]) if t["close"] else 0,
+                    "pnl":           float(t["pnl"]) if t["pnl"] else 0,
+                    "result":        t["result"],
+                    "note":          t["note"] or "",
+                    "divergence":    t["divergence"],
+                    "news_score":    t["news_score"] or 0,
+                    "time":          t["time"] or "",
+                    "ai_action":     t["ai_action"],
+                    "ai_confidence": float(t["ai_confidence"]) if t["ai_confidence"] else None,
+                    "ai_reasoning":  t["ai_reasoning"],
+                    "ai_shadow_mode": t["ai_shadow_mode"],
                 })
 
         return {
@@ -467,8 +490,9 @@ def db_save_trade(strategy: str, trade: dict, user_id: int = 1):
             cur.execute("""
                 INSERT INTO trades
                     (user_id, strategy, type, entry, close, pnl, result, note,
-                     divergence, news_score, trade_time)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     divergence, news_score, trade_time,
+                     ai_action, ai_confidence, ai_reasoning, ai_shadow_mode)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 user_id, strategy,
                 trade.get("type"),
@@ -480,10 +504,51 @@ def db_save_trade(strategy: str, trade: dict, user_id: int = 1):
                 trade.get("divergence", False),
                 trade.get("news_score", 0),
                 trade.get("time", ""),
+                trade.get("ai_action"),
+                trade.get("ai_confidence"),
+                trade.get("ai_reasoning"),
+                trade.get("ai_shadow_mode", True),
             ))
         conn.commit()
     except Exception as e:
         log.error(f"db_save_trade [{strategy}] error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def db_save_trade_ai(trade_id_or_latest: str, strategy: str, ai_action: str,
+                     ai_confidence: float, ai_reasoning: str,
+                     ai_shadow_mode: bool, user_id: int = 1):
+    """
+    Ενημερώνει το τελευταίο trade με AI commentary.
+    Καλείται από bot.py αφού αποθηκευτεί το trade.
+    """
+    conn = get_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE trades SET
+                    ai_action      = %s,
+                    ai_confidence  = %s,
+                    ai_reasoning   = %s,
+                    ai_shadow_mode = %s
+                WHERE id = (
+                    SELECT id FROM trades
+                    WHERE strategy = %s AND user_id = %s
+                    ORDER BY id DESC LIMIT 1
+                )
+            """, (
+                ai_action, ai_confidence,
+                ai_reasoning[:500] if ai_reasoning else None,
+                ai_shadow_mode,
+                strategy, user_id,
+            ))
+        conn.commit()
+        log.debug(f"db_save_trade_ai [{strategy}] OK: {ai_action} conf={ai_confidence:.2f}")
+    except Exception as e:
+        log.error(f"db_save_trade_ai [{strategy}] error: {e}")
         conn.rollback()
     finally:
         conn.close()
