@@ -17,7 +17,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 # Models — Claude 4 family
 TECHNICAL_AGENT_MODEL = "claude-haiku-4-5-20251001"      # Φθηνό, γρήγορο
 NEWS_AGENT_MODEL = "claude-haiku-4-5-20251001"           # Φθηνό
-COORDINATOR_MODEL = "claude-haiku-4-5-20251001"          # Τελική απόφαση
+COORDINATOR_MODEL = "claude-sonnet-4-6"          # Τελική απόφαση
 
 # Max tokens ανά agent — όσο πιο μικρά, τόσο πιο φθηνά
 TECHNICAL_MAX_TOKENS = 800
