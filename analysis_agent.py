@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN  = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT   = os.environ.get("TELEGRAM_CHAT_ID", "")
-BOT_URL         = os.environ.get("BOT_URL", "https://web-production-85af7.up.railway.app")
+BOT_URL         = os.environ.get("BOT_URL", "https://smc-ai-bot-production.up.railway.app")
 GREECE_TZ       = ZoneInfo("Europe/Athens")
 claude          = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 MODEL           = "claude-haiku-4-5-20251001"   # fast & cheap for agents
@@ -112,7 +112,7 @@ def agent_technical(data: dict, price: float, rsi_1h: float, rsi_15m: float) -> 
     box_l = a.get("box_low", "?")
     mid   = a.get("mid", "?")
     return ask_claude(
-        "You are a crypto technical analyst. Be concise, max 4 lines.",
+        "Είσαι crypto technical analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
         f"""BTC current price: ${price:,.2f}
 RSI 1H: {rsi_1h} | RSI 15m: {rsi_15m}
 Daily Box: {box_l} - {box_h} | MID: {mid}
@@ -123,7 +123,7 @@ Give a brief technical outlook: trend, key levels, bias (bullish/bearish/neutral
 
 def agent_sentiment(news: str, fear_greed: str) -> str:
     return ask_claude(
-        "You are a crypto sentiment analyst. Be concise, max 4 lines.",
+        "Είσαι crypto sentiment analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
         f"""Fear & Greed Index: {fear_greed}
 
 Latest BTC news:
@@ -135,7 +135,7 @@ Summarize market sentiment: bullish/bearish/neutral and why."""
 
 def agent_onchain(funding: str, price: float) -> str:
     return ask_claude(
-        "You are a crypto on-chain analyst. Be concise, max 4 lines.",
+        "Είσαι crypto on-chain analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
         f"""BTC Price: ${price:,.2f}
 Funding Rate: {funding}
 
@@ -146,11 +146,11 @@ Interpret the funding rate signal. Is the market overheated long or short? What 
 def agent_debate(technical: str, sentiment: str, onchain: str) -> tuple[str, str]:
     """Bull and Bear agents debate based on the 3 reports."""
     bull = ask_claude(
-        "You are a BULL trader. Make the strongest possible case to BUY BTC right now. Max 3 lines.",
+        "Είσαι BULL trader. Κάνε το ισχυρότερο δυνατό επιχείρημα για ΑΓΟΡΑ BTC τώρα. ΜΟΝΟ ελληνικά, max 3 γραμμές.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     bear = ask_claude(
-        "You are a BEAR trader. Make the strongest possible case to SELL or AVOID BTC right now. Max 3 lines.",
+        "Είσαι BEAR trader. Κάνε το ισχυρότερο δυνατό επιχείρημα για ΠΩΛΗΣΗ/ΑΠΟΦΥΓΗ BTC τώρα. ΜΟΝΟ ελληνικά, max 3 γραμμές.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     return bull, bear
@@ -171,18 +171,18 @@ def agent_verdict(technical: str, sentiment: str, onchain: str,
     bot_state = "\n".join(states)
 
     return ask_claude(
-        f"""You are a senior risk manager for a BTC futures trading bot.
+        f"""Είσαι senior risk manager για BTC futures trading bot.
 Session: {session}
-Give a final verdict and specific advice for each strategy (A=Daily Box, B=1H Box auto, C=1H Box webhook, D=webhook).
-Format:
-VERDICT: [BULLISH/BEARISH/NEUTRAL]
-CONFIDENCE: [HIGH/MEDIUM/LOW]
-Strategy A: [advice]
-Strategy B: [advice]
-Strategy C: [advice]
-Strategy D: [advice]
-WATCH OUT: [one key risk]
-Max 10 lines total.""",
+Δώσε τελικό verdict και συγκεκριμένη συμβουλή για κάθε στρατηγική (A=Daily Box, B=1H Box auto, C=1H Box webhook, D=webhook).
+ΜΟΝΟ στα ελληνικά. Χρησιμοποίησε αυτό το format:
+VERDICT: [ΑΝΟΔΙΚΟ/ΚΑΘΟΔΙΚΟ/ΟΥΔΕΤΕΡΟ]
+ΕΜΠΙΣΤΟΣΥΝΗ: [ΥΨΗΛΗ/ΜΕΤΡΙΑ/ΧΑΜΗΛΗ]
+Στρατηγική A: [συμβουλή]
+Στρατηγική B: [συμβουλή]
+Στρατηγική C: [συμβουλή]
+Στρατηγική D: [συμβουλή]
+ΠΡΟΣΟΧΗ: [ένας βασικός κίνδυνος]
+Max 10 γραμμές.""",
         f"""Technical:\n{technical}
 
 Sentiment:\n{sentiment}
