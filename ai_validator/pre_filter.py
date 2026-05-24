@@ -90,22 +90,9 @@ def _calc_rr(entry: float, sl: float, tp: float) -> float:
 
 def _is_weekend_low_liquidity() -> bool:
     """
-    Ελέγχει αν είμαστε σε low-liquidity weekend window.
-    Παρασκευή 22:00 UTC → Κυριακή 22:00 UTC.
+    Crypto trades 24/7 — το weekend rule αφαιρέθηκε.
+    Κρατιέται για μελλοντική χρήση αν προστεθεί forex/metals.
     """
-    now = datetime.now(timezone.utc)
-    dow  = now.weekday()  # 0=Monday, 6=Sunday
-    hour = now.hour
-
-    # Παρασκευή από 22:00
-    if dow == 4 and hour >= 22:
-        return True
-    # Ολόκληρο Σάββατο
-    if dow == 5:
-        return True
-    # Κυριακή μέχρι 22:00
-    if dow == 6 and hour < 22:
-        return True
     return False
 
 
@@ -203,10 +190,11 @@ def run_pre_filter(
     # HARD SKIP RULES
     # ────────────────────────────────────────────────────────────
 
-    # Rule 1 — Weekend low liquidity
+    # Rule 1 — Weekend low liquidity (disabled για crypto — 24/7 market)
+    # Ενεργοποίησε αν προσθέσεις forex/metals assets
     if _is_weekend_low_liquidity():
         result.skip        = True
-        result.skip_reason = "Weekend low liquidity (Fri 22:00 - Sun 22:00 UTC)"
+        result.skip_reason = "Weekend low liquidity"
         log.info(f"[PreFilter] {strategy} SKIP: {result.skip_reason}")
         return result
 
