@@ -490,6 +490,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
   <button class="tab" data-tab="B" onclick="switchTab('B')">Strategy B</button>
   <button class="tab" data-tab="C" onclick="switchTab('C')">Strategy C</button>
   <button class="tab" data-tab="compare" onclick="switchTab('compare')">⚡ Compare</button>
+  <button class="tab" data-tab="timing" onclick="switchTab('timing')">⏱ Timing</button>
 </div>
 
 <!-- STRATEGY A -->
@@ -516,6 +517,15 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
   <div id="data-compare" style="display:none;"></div>
 </div>
 
+<!-- TIMING -->
+<div class="content" id="tab-timing">
+  <div id="data-timing" style="padding:24px;">
+    <div style="display:flex;align-items:center;justify-content:center;height:200px;color:#3d4f6e;font-size:12px;letter-spacing:2px;">
+      LOADING TIMING DATA...
+    </div>
+  </div>
+</div>
+
 <script>
 const COLORS = { A: '#3b82f6', B: '#8b5cf6', C: '#f97316' };
 const NAMES  = { A: 'Strategy A', B: 'Strategy B', C: 'Strategy C' };
@@ -536,6 +546,7 @@ function switchTab(tab) {
   document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
   document.querySelector(`.tab[data-tab="${tab}"]`).classList.add('active');
   document.getElementById(`tab-${tab}`).classList.add('active');
+  if (tab === 'timing') { loadTiming(); return; }
   if (!loaded[tab]) loadTab(tab);
 }
 
@@ -999,7 +1010,7 @@ function statCard(label, value, color, sub='') {
 // ── TIMING ANALYSIS ──────────────────────────────────────────
 async function loadTiming() {
   setActiveNav('nav-timing');
-  document.getElementById('main').innerHTML = `
+  document.getElementById('data-timing').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text2);font-size:13px;">
       Φόρτωση timing data...
     </div>`;
@@ -1055,7 +1066,7 @@ async function loadTiming() {
 
   const totalTrades = Object.values(byHour).reduce((s,v) => s+v.trades, 0);
 
-  document.getElementById('main').innerHTML = `
+  document.getElementById('data-timing').innerHTML = `
     <!-- SUMMARY CARDS -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;">
       ${topH.length ? `
