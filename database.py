@@ -73,9 +73,11 @@ def init_db():
                     strategy_a          BOOLEAN DEFAULT true,
                     strategy_b          BOOLEAN DEFAULT true,
                     strategy_c          BOOLEAN DEFAULT true,
-                    strategy_d          BOOLEAN DEFAULT true,
-                    trading_mode        VARCHAR(20) DEFAULT 'paper',
-                    created_at          TIMESTAMP DEFAULT NOW()
+                    strategy_d              BOOLEAN DEFAULT true,
+                    trading_mode            VARCHAR(20) DEFAULT 'paper',
+                    ai_validator_enabled    BOOLEAN DEFAULT true,
+                    ai_shadow_mode          BOOLEAN DEFAULT true,
+                    created_at              TIMESTAMP DEFAULT NOW()
                 )
             """)
 
@@ -119,6 +121,16 @@ def init_db():
             """)
             cur.execute("""
                 ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)
+            """)
+
+            # Migration Φάση 3.6: AI settings στο user_settings
+            cur.execute("""
+                ALTER TABLE user_settings
+                ADD COLUMN IF NOT EXISTS ai_validator_enabled BOOLEAN DEFAULT true
+            """)
+            cur.execute("""
+                ALTER TABLE user_settings
+                ADD COLUMN IF NOT EXISTS ai_shadow_mode BOOLEAN DEFAULT true
             """)
 
             # Migration Φάση 3.5: AI Validator columns στο trades table
@@ -263,20 +275,23 @@ def save_user_settings(user_id: int, settings: dict) -> bool:
                 INSERT INTO user_settings (
                     user_id, bitget_api_key, bitget_secret_key, bitget_passphrase,
                     telegram_token, telegram_chat_id, risk_percent,
-                    strategy_a, strategy_b, strategy_c, strategy_d, trading_mode
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    strategy_a, strategy_b, strategy_c, strategy_d, trading_mode,
+                    ai_validator_enabled, ai_shadow_mode
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
-                    bitget_api_key      = EXCLUDED.bitget_api_key,
-                    bitget_secret_key   = EXCLUDED.bitget_secret_key,
-                    bitget_passphrase   = EXCLUDED.bitget_passphrase,
-                    telegram_token      = EXCLUDED.telegram_token,
-                    telegram_chat_id    = EXCLUDED.telegram_chat_id,
-                    risk_percent        = EXCLUDED.risk_percent,
-                    strategy_a          = EXCLUDED.strategy_a,
-                    strategy_b          = EXCLUDED.strategy_b,
-                    strategy_c          = EXCLUDED.strategy_c,
-                    strategy_d          = EXCLUDED.strategy_d,
-                    trading_mode        = EXCLUDED.trading_mode
+                    bitget_api_key       = EXCLUDED.bitget_api_key,
+                    bitget_secret_key    = EXCLUDED.bitget_secret_key,
+                    bitget_passphrase    = EXCLUDED.bitget_passphrase,
+                    telegram_token       = EXCLUDED.telegram_token,
+                    telegram_chat_id     = EXCLUDED.telegram_chat_id,
+                    risk_percent         = EXCLUDED.risk_percent,
+                    strategy_a           = EXCLUDED.strategy_a,
+                    strategy_b           = EXCLUDED.strategy_b,
+                    strategy_c           = EXCLUDED.strategy_c,
+                    strategy_d           = EXCLUDED.strategy_d,
+                    trading_mode         = EXCLUDED.trading_mode,
+                    ai_validator_enabled = EXCLUDED.ai_validator_enabled,
+                    ai_shadow_mode       = EXCLUDED.ai_shadow_mode
             """, (
                 user_id,
                 settings.get('bitget_api_key'),
@@ -290,6 +305,8 @@ def save_user_settings(user_id: int, settings: dict) -> bool:
                 settings.get('strategy_c', True),
                 settings.get('strategy_d', True),
                 settings.get('trading_mode', 'paper'),
+                settings.get('ai_validator_enabled', True),
+                settings.get('ai_shadow_mode', True),
             ))
         conn.commit()
         return True
