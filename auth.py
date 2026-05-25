@@ -106,6 +106,39 @@ LOGIN_HTML = """
     <div class="footer">Don't have an account? <a href="/register">Sign up</a></div>
   </div>
 </div>
+<script>
+function sendBriefing(session_type) {
+  var labels = {morning:'🌅 Πρωινό', midday:'☀️ Μεσημεριανό', evening:'🌙 Βραδινό'};
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Αποστολή...';
+  fetch('/admin/briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: session_type})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      btn.textContent = '✅ Εστάλη!';
+      btn.style.color = '#4ade80';
+    } else {
+      btn.textContent = '❌ Error';
+      btn.style.color = '#f87171';
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = labels[session_type] || session_type;
+    }, 3000);
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '❌ Error';
+    alert('Error: ' + e);
+  });
+}
+</script>
 </body></html>
 """
 
@@ -178,6 +211,39 @@ REGISTER_HTML = """
     <div class="footer">Already have an account? <a href="/login">Sign in</a></div>
   </div>
 </div>
+<script>
+function sendBriefing(session_type) {
+  var labels = {morning:'🌅 Πρωινό', midday:'☀️ Μεσημεριανό', evening:'🌙 Βραδινό'};
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Αποστολή...';
+  fetch('/admin/briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: session_type})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      btn.textContent = '✅ Εστάλη!';
+      btn.style.color = '#4ade80';
+    } else {
+      btn.textContent = '❌ Error';
+      btn.style.color = '#f87171';
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = labels[session_type] || session_type;
+    }, 3000);
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '❌ Error';
+    alert('Error: ' + e);
+  });
+}
+</script>
 </body></html>
 """
 
@@ -450,6 +516,39 @@ function updateShadowBadge(cb) {
   }
 }
 </script>
+<script>
+function sendBriefing(session_type) {
+  var labels = {morning:'🌅 Πρωινό', midday:'☀️ Μεσημεριανό', evening:'🌙 Βραδινό'};
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Αποστολή...';
+  fetch('/admin/briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: session_type})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      btn.textContent = '✅ Εστάλη!';
+      btn.style.color = '#4ade80';
+    } else {
+      btn.textContent = '❌ Error';
+      btn.style.color = '#f87171';
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = labels[session_type] || session_type;
+    }, 3000);
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '❌ Error';
+    alert('Error: ' + e);
+  });
+}
+</script>
 </body></html>
 """
 
@@ -542,6 +641,39 @@ CHANGE_PW_HTML = """
     <a class="back" href="/settings">← Back to settings</a>
   </div>
 </div>
+<script>
+function sendBriefing(session_type) {
+  var labels = {morning:'🌅 Πρωινό', midday:'☀️ Μεσημεριανό', evening:'🌙 Βραδινό'};
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Αποστολή...';
+  fetch('/admin/briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: session_type})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      btn.textContent = '✅ Εστάλη!';
+      btn.style.color = '#4ade80';
+    } else {
+      btn.textContent = '❌ Error';
+      btn.style.color = '#f87171';
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = labels[session_type] || session_type;
+    }, 3000);
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '❌ Error';
+    alert('Error: ' + e);
+  });
+}
+</script>
 </body></html>
 """
 
@@ -608,8 +740,15 @@ tr:last-child td { border-bottom: none; }
     <a class="sb-item" href="/logout" style="color:var(--red);">🚪 Logout</a>
   </div>
   <div class="main">
-    <div class="page-title">Admin Panel</div>
-    {% if msg %}<div class="alert alert-success" style="margin-bottom:16px;">{{ msg }}</div>{% endif %}
+    <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;">
+      Admin Panel
+      <div style="display:flex;gap:8px;">
+        <button onclick="sendBriefing('morning')" style="background:#0f1d2e;color:#4ade80;border:1px solid #14532d;padding:7px 14px;border-radius:7px;font-size:11px;cursor:pointer;">🌅 Πρωινό Briefing</button>
+        <button onclick="sendBriefing('midday')"  style="background:#0f1d2e;color:#facc15;border:1px solid #3a2f0a;padding:7px 14px;border-radius:7px;font-size:11px;cursor:pointer;">☀️ Μεσημεριανό</button>
+        <button onclick="sendBriefing('evening')" style="background:#0f1d2e;color:#818cf8;border:1px solid #1e1b4b;padding:7px 14px;border-radius:7px;font-size:11px;cursor:pointer;">🌙 Βραδινό</button>
+      </div>
+    </div>
+    {% if msg %}<div style="background:#0f1d2e;border:1px solid #14532d;color:#4ade80;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:16px;">{{ msg }}</div>{% endif %}
 
     <div class="stats-row">
       <div class="stat"><div class="stat-lbl">Total Users</div><div class="stat-val">{{ stats.total_users }}</div></div>
@@ -701,6 +840,39 @@ function adminAction(action, userId) {
   }).then(r => r.json()).then(d => { if(d.ok) location.reload(); });
 }
 </script>
+<script>
+function sendBriefing(session_type) {
+  var labels = {morning:'🌅 Πρωινό', midday:'☀️ Μεσημεριανό', evening:'🌙 Βραδινό'};
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Αποστολή...';
+  fetch('/admin/briefing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: session_type})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      btn.textContent = '✅ Εστάλη!';
+      btn.style.color = '#4ade80';
+    } else {
+      btn.textContent = '❌ Error';
+      btn.style.color = '#f87171';
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = labels[session_type] || session_type;
+    }, 3000);
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '❌ Error';
+    alert('Error: ' + e);
+  });
+}
+</script>
 </body></html>
 """
 
@@ -711,6 +883,29 @@ def admin():
     stats = get_admin_stats()
     msg   = request.args.get('msg')
     return render_template_string(ADMIN_HTML, users=users, stats=stats, msg=msg)
+
+@auth_bp.route('/admin/briefing', methods=['POST'])
+@admin_required
+def admin_briefing():
+    """Στέλνει manual briefing στο Telegram."""
+    import threading
+    data = request.get_json() or {}
+    session_type = data.get('session', 'morning')
+
+    session_labels = {
+        'morning': '🌅 ΠΡΩΙ',
+        'midday':  '☀️ ΜΕΣΗΜΕΡΙ',
+        'evening': '🌙 ΒΡΑΔΥ',
+    }
+    label = session_labels.get(session_type, '📊 MANUAL')
+
+    try:
+        from analysis_agent import run_briefing
+        threading.Thread(target=run_briefing, args=(label,), daemon=True).start()
+        return jsonify({"ok": True, "session": label})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @auth_bp.route('/admin/action', methods=['POST'])
 @admin_required
