@@ -44,7 +44,7 @@ def ask_claude(system: str, user: str) -> str:
     try:
         resp = claude.messages.create(
             model=MODEL,
-            max_tokens=250,
+            max_tokens=400,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -55,35 +55,24 @@ def ask_claude(system: str, user: str) -> str:
 
 
 def fetch_bot_data() -> dict:
-    """
-    Παίρνει live state απευθείας από τα bot objects (ίδια process).
-    Fallback στο HTTP αν δεν μπορεί να κάνει import.
-    """
     try:
         from bot import state, state_b, state_c, state_d, rt
-        # Προσθέτουμε live price/RSI από το WebSocket object
-        data_a = dict(state)
-        data_a["price"]    = rt.price   if rt.price   > 0  else state.get("current_price", 0)
-        data_a["rsi_1h"]   = round(rt.rsi_1h,  2) if hasattr(rt, "rsi_1h")  else state.get("current_rsi", 0)
-        data_a["rsi_15m"]  = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
-        data_a["box_high"] = state.get("box", {}).get("high", 0) if state.get("box") else 0
-        data_a["box_low"]  = state.get("box", {}).get("low",  0) if state.get("box") else 0
-        data_a["mid"]      = state.get("box", {}).get("mid",  0) if state.get("box") else 0
-        return {
-            "A": data_a,
-            "B": dict(state_b),
-            "C": dict(state_c),
-            "D": dict(state_d),
-        }
+        a = dict(state)
+        a["price"]   = rt.price if rt.price > 0 else state.get("current_price", 0)
+        a["rsi_1h"]  = round(rt.rsi_1h, 2) if hasattr(rt, "rsi_1h") else state.get("current_rsi", 0)
+        a["rsi_15m"] = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
+        a["box_high"] = (state.get("box") or {}).get("high", 0)
+        a["box_low"]  = (state.get("box") or {}).get("low", 0)
+        a["mid"]      = (state.get("box") or {}).get("mid", 0)
+        return {"A": a, "B": dict(state_b), "C": dict(state_c), "D": dict(state_d)}
     except Exception as e:
-        log.warning(f"Direct import failed: {e} — falling back to HTTP")
+        log.warning(f"Direct import failed: {e}")
         data = {}
-        for endpoint, key in [("/api", "A"), ("/api/b", "B"), ("/api/c", "C"), ("/api/d", "D")]:
+        for endpoint, key in [("/api","A"),("/api/b","B"),("/api/c","C"),("/api/d","D")]:
             try:
                 r = requests.get(BOT_URL + endpoint, timeout=8)
                 data[key] = r.json()
-            except Exception as e2:
-                log.warning(f"Cannot reach {endpoint}: {e2}")
+            except Exception:
                 data[key] = {}
         return data
 
@@ -125,6 +114,75 @@ def fetch_funding_rate() -> str:
     except Exception:
         return "N/A"
 
+def fetch_btc_dominance() -> str:
+    """BTC Dominance % από CoinPaprika (free, no key)."""
+    try:
+        r = requests.get("https://api.coinpaprika.com/v1/global", timeout=8)
+        d = r.json()
+        dom = d.get("bitcoin_dominance_percentage", 0)
+        return f"{dom:.1f}%"
+    except Exception:
+        return "N/A"
+
+
+def fetch_open_interest() -> str:
+    """BTC Open Interest από Bitget."""
+    try:
+        r = requests.get(
+            "https://api.bitget.com/api/v2/mix/market/open-interest"
+            "?symbol=BTCUSDT&productType=usdt-futures",
+            timeout=8
+        )
+        d = r.json()
+        oi = float(d["data"][0].get("openInterestList", [{}])[0].get("openInterest", 0) or
+                   d["data"][0].get("openInterest", 0))
+        if oi > 1_000_000_000:
+            return f"${oi/1_000_000_000:.2f}B"
+        elif oi > 1_000_000:
+            return f"${oi/1_000_000:.1f}M"
+        return f"${oi:,.0f}"
+    except Exception:
+        return "N/A"
+
+
+def fetch_long_short_ratio() -> str:
+    """BTC Long/Short Ratio από Bitget."""
+    try:
+        r = requests.get(
+            "https://api.bitget.com/api/v2/mix/market/account-long-short-ratio"
+            "?symbol=BTCUSDT&productType=usdt-futures&period=1h",
+            timeout=8
+        )
+        d = r.json()
+        items = d.get("data", [])
+        if items:
+            ls = float(items[-1].get("longShortRatio", 1))
+            long_pct  = round(ls / (1 + ls) * 100, 1)
+            short_pct = round(100 - long_pct, 1)
+            sentiment = "🟢 Longs κυριαρχούν" if ls > 1.1 else "🔴 Shorts κυριαρχούν" if ls < 0.9 else "⚪ Ισορροπία"
+            return f"L:{long_pct}% S:{short_pct}% — {sentiment}"
+    except Exception:
+        pass
+    return "N/A"
+
+
+def fetch_btc_change_24h() -> str:
+    """BTC 24h change % από Bitget."""
+    try:
+        r = requests.get(
+            "https://api.bitget.com/api/v2/mix/market/ticker"
+            "?symbol=BTCUSDT&productType=usdt-futures",
+            timeout=8
+        )
+        d = r.json()
+        change = float(d["data"][0].get("change24h", 0) or
+                       d["data"][0].get("priceChangePercent", 0))
+        arrow = "📈" if change >= 0 else "📉"
+        return f"{arrow} {change:+.2f}%"
+    except Exception:
+        return "N/A"
+
+
 # ── The 5 Agents ──────────────────────────────────────────────────────────────
 
 def agent_technical(data: dict, price: float, rsi_1h: float, rsi_15m: float) -> str:
@@ -133,7 +191,7 @@ def agent_technical(data: dict, price: float, rsi_1h: float, rsi_15m: float) -> 
     box_l = a.get("box_low", "?")
     mid   = a.get("mid", "?")
     return ask_claude(
-        "You are a crypto technical analyst. Be concise, max 4 lines.",
+        "Είσαι crypto technical analyst. ΜΟΝΟ ελληνικά. MAX 3 γραμμές. ΟΧΙ markdown/bold/headers.",
         f"""BTC current price: ${price:,.2f}
 RSI 1H: {rsi_1h} | RSI 15m: {rsi_15m}
 Daily Box: {box_l} - {box_h} | MID: {mid}
@@ -144,7 +202,7 @@ Give a brief technical outlook: trend, key levels, bias (bullish/bearish/neutral
 
 def agent_sentiment(news: str, fear_greed: str) -> str:
     return ask_claude(
-        "You are a crypto sentiment analyst. Be concise, max 4 lines.",
+        "Είσαι crypto sentiment analyst. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ markdown.",
         f"""Fear & Greed Index: {fear_greed}
 
 Latest BTC news:
@@ -154,24 +212,27 @@ Summarize market sentiment: bullish/bearish/neutral and why."""
     )
 
 
-def agent_onchain(funding: str, price: float) -> str:
+def agent_onchain(funding: str, price: float,
+                  open_interest: str = "N/A", ls_ratio: str = "N/A") -> str:
     return ask_claude(
-        "You are a crypto on-chain analyst. Be concise, max 4 lines.",
+        "Είσαι crypto on-chain analyst. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ markdown.",
         f"""BTC Price: ${price:,.2f}
 Funding Rate: {funding}
+Open Interest: {open_interest}
+Long/Short Ratio: {ls_ratio}
 
-Interpret the funding rate signal. Is the market overheated long or short? What does this mean for direction?"""
+Ανάλυσε αυτά τα δεδομένα. Τι σηματοδοτούν για την κατεύθυνση;"""
     )
 
 
 def agent_debate(technical: str, sentiment: str, onchain: str) -> tuple[str, str]:
     """Bull and Bear agents debate based on the 3 reports."""
     bull = ask_claude(
-        "Είσαι BULL trader. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ headers. 1 επιχείρημα.",
+        "Είσαι BULL trader. ΜΟΝΟ ελληνικά. 1-2 προτάσεις. ΟΧΙ markdown.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     bear = ask_claude(
-        "Είσαι BEAR trader. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ headers. 1 επιχείρημα.",
+        "Είσαι BEAR trader. ΜΟΝΟ ελληνικά. 1-2 προτάσεις. ΟΧΙ markdown.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     return bull, bear
@@ -192,10 +253,7 @@ def agent_verdict(technical: str, sentiment: str, onchain: str,
     bot_state = "\n".join(states)
 
     return ask_claude(
-        f"""Είσαι risk manager για BTC bot. Session: {session}. ΜΟΝΟ ελληνικά. ΟΧΙ markdown. MAX 6 γραμμές:
-VERDICT: [ΑΝΟΔΙΚΟ/ΚΑΘΟΔΙΚΟ/ΟΥΔΕΤΕΡΟ] | ΕΜΠΙΣΤΟΣΥΝΗ: [ΥΨΗΛΗ/ΜΕΤΡΙΑ/ΧΑΜΗΛΗ]
-A: [1 γραμμή] B: [1 γραμμή] C: [1 γραμμή] D: [1 γραμμή]
-ΠΡΟΣΟΧΗ: [1 κίνδυνος]""",
+        "Είσαι risk manager BTC bot. Session: " + session + ". ΜΟΝΟ ελληνικά. ΟΧΙ markdown. MAX 5 γραμμές. Format: VERDICT:[ΑΝΟΔΙΚΟ/ΚΑΘΟΔΙΚΟ/ΟΥΔΕΤΕΡΟ] | ΕΜΠΙΣΤΟΣΥΝΗ:[ΥΨΗΛΗ/ΜΕΤΡΙΑ/ΧΑΜΗΛΗ] — A:[1 φράση] — B:[1 φράση] — C:[1 φράση] — D:[1 φράση] — ΠΡΟΣΟΧΗ:[1 κίνδυνος]",
         f"""Technical:\n{technical}
 
 Sentiment:\n{sentiment}
@@ -215,11 +273,26 @@ def run_briefing(session: str):
     """Run full multi-agent analysis and send Telegram."""
     log.info(f"Starting {session} briefing...")
 
-    # 1. Fetch all data
-    bot_data   = fetch_bot_data()
-    news       = fetch_btc_news()
-    fear_greed = fetch_fear_greed()
-    funding    = fetch_funding_rate()
+    # 1. Fetch all data παράλληλα
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        f_bot      = ex.submit(fetch_bot_data)
+        f_news     = ex.submit(fetch_btc_news)
+        f_fg       = ex.submit(fetch_fear_greed)
+        f_funding  = ex.submit(fetch_funding_rate)
+        f_dom      = ex.submit(fetch_btc_dominance)
+        f_oi       = ex.submit(fetch_open_interest)
+        f_ls       = ex.submit(fetch_long_short_ratio)
+        f_chg      = ex.submit(fetch_btc_change_24h)
+
+    bot_data    = f_bot.result()
+    news        = f_news.result()
+    fear_greed  = f_fg.result()
+    funding     = f_funding.result()
+    dominance   = f_dom.result()
+    open_interest = f_oi.result()
+    ls_ratio    = f_ls.result()
+    change_24h  = f_chg.result()
 
     # Extract price & RSI from strategy A
     a_data  = bot_data.get("A", {})
@@ -231,50 +304,27 @@ def run_briefing(session: str):
     log.info("Running agents...")
     technical = agent_technical(bot_data, price, rsi_1h, rsi_15m)
     sentiment = agent_sentiment(news, fear_greed)
-    onchain   = agent_onchain(funding, price)
+    onchain   = agent_onchain(funding, price, open_interest, ls_ratio)
     bull, bear = agent_debate(technical, sentiment, onchain)
     verdict   = agent_verdict(technical, sentiment, onchain, bull, bear, bot_data, session)
 
-    # 3. Session emoji
-    emoji = {"🌅 ΠΡΩΙ": "🌅", "☀️ ΜΕΣΗΜΕΡΙ": "☀️", "🌙 ΒΡΑΔΥ": "🌙"}.get(session, "📊")
-
-    # 4. Format Telegram message
+        # 3. Split σε 2 messages
+    emoji  = {"🌅 ΠΡΩΙ": "🌅", "☀️ ΜΕΣΗΜΕΡΙ": "☀️", "🌙 ΒΡΑΔΥ": "🌙"}.get(session, "📊")
     now_gr = datetime.now(GREECE_TZ).strftime("%d/%m %H:%M")
-    msg = f"""<b>{emoji} BTC BRIEFING — {session}</b>
-<i>{now_gr} | BTC: ${price:,.2f}</i>
-
-<b>📊 Τεχνική Ανάλυση:</b>
-{technical}
-
-<b>📰 Sentiment (Fear&amp;Greed: {fear_greed}):</b>
-{sentiment}
-
-<b>⛓️ On-Chain (Funding: {funding}):</b>
-{onchain}
-
-<b>🐂 Bull Case:</b>
-{bull}
-
-<b>🐻 Bear Case:</b>
-{bear}
-
-<b>✅ VERDICT:</b>
-{verdict}"""
-
-    # Split αν το μήνυμα είναι πολύ μεγάλο για Telegram (max 4096)
-    MAX_LEN = 3800
-    if len(msg) <= MAX_LEN:
-        send_telegram(msg)
-    else:
-        # Κόβουμε στη μέση με λογικό σημείο
-        mid = msg.rfind("\n\n", 0, MAX_LEN)
-        if mid == -1:
-            mid = msg.rfind("\n", 0, MAX_LEN)
-        if mid == -1:
-            mid = MAX_LEN
-        send_telegram(msg[:mid])
-        send_telegram(msg[mid:].strip())
-    log.info(f"{session} briefing sent!")
+    NL     = chr(10)
+    msg1 = (emoji + " <b>BTC " + session + "</b> | " + now_gr
+            + NL + "<b>$" + "{:,.0f}".format(price) + "</b> " + change_24h
+            + " | Dom: " + dominance + " | OI: " + open_interest
+            + NL + "L/S: " + ls_ratio
+            + NL + NL + "📊 " + technical[:350]
+            + NL + NL + "📰 F&G: " + fear_greed + " — " + sentiment[:250]
+            + NL + NL + "⛓️ Funding: " + funding + " — " + onchain[:200])
+    msg2 = ("🐂 " + bull[:200]
+            + NL + NL + "🐻 " + bear[:200]
+            + NL + NL + "✅ " + verdict[:600])
+    send_telegram(msg1)
+    send_telegram(msg2)
+    log.infolog.info(f"{session} briefing sent!")
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
