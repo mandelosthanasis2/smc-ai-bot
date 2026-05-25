@@ -213,6 +213,18 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
     # Saved PnL: πόσο θα χάναμε αν δεν ακούγαμε τα SKIP
     saved_pnl = round(sum(float(t["pnl"] or 0) for t in ai_skips if t["result"] == "LOSS"), 2)
 
+    # AI vs No-AI comparison
+    ai_trade_pnls    = [float(t["pnl"] or 0) for t in ai_trades]
+    no_ai_trade_pnls = [float(t["pnl"] or 0) for t in trades if not t.get("ai_action")]
+    ai_wins    = [t for t in ai_trades if t["result"] == "WIN"]
+    no_ai_wins = [t for t in trades if not t.get("ai_action") and t["result"] == "WIN"]
+
+    ai_wr    = round(len(ai_wins)    / len(ai_trades)               * 100, 1) if ai_trades        else 0
+    no_ai_wr = round(len(no_ai_wins) / len([t for t in trades if not t.get("ai_action")]) * 100, 1)                if [t for t in trades if not t.get("ai_action")] else 0
+
+    ai_avg_pnl    = round(sum(ai_trade_pnls)    / len(ai_trade_pnls),    2) if ai_trade_pnls    else 0
+    no_ai_avg_pnl = round(sum(no_ai_trade_pnls) / len(no_ai_trade_pnls), 2) if no_ai_trade_pnls else 0
+
     ai_stats = {
         "total_ai_trades":  len(ai_trades),
         "skips":            len(ai_skips),
@@ -225,6 +237,12 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
         "saved_pnl":        saved_pnl,
         "shadow_trades":    len([t for t in ai_trades if t.get("ai_shadow_mode")]),
         "active_trades":    len([t for t in ai_trades if not t.get("ai_shadow_mode")]),
+        "ai_win_rate":      ai_wr,
+        "no_ai_win_rate":   no_ai_wr,
+        "ai_avg_pnl":       ai_avg_pnl,
+        "no_ai_avg_pnl":    no_ai_avg_pnl,
+        "ai_trade_count":   len(ai_trades),
+        "no_ai_trade_count": len([t for t in trades if not t.get("ai_action")]),
     }
 
     # ── Consecutive wins/losses
@@ -627,6 +645,26 @@ function renderStrategy(s, d) {
             ${statCard('REDUCE', ai.reduces||0, 'var(--yellow)')}
           </div>
           ${rec}
+
+          ${(() => {
+            const noAiCount = ai.no_ai_trade_count || 0;
+            const aiCount   = ai.ai_trade_count    || 0;
+            if (noAiCount < 3 || aiCount < 3) return '<div style="margin-top:10px;font-size:10px;color:var(--text2);">AI vs No-AI: χρειάζονται 3+ trades (AI: ' + aiCount + ', No-AI: ' + noAiCount + ')</div>';
+            const aiWR    = (ai.ai_win_rate    ||0).toFixed(1);
+            const noAiWR  = (ai.no_ai_win_rate ||0).toFixed(1);
+            const aiAvg   = (ai.ai_avg_pnl     ||0).toFixed(1);
+            const noAiAvg = (ai.no_ai_avg_pnl  ||0).toFixed(1);
+            const wrDiff  = ((ai.ai_win_rate||0)-(ai.no_ai_win_rate||0)).toFixed(1);
+            const pnlDiff = ((ai.ai_avg_pnl||0)-(ai.no_ai_avg_pnl||0)).toFixed(1);
+            const wc = wrDiff>=0?'var(--green)'  :'var(--red)';
+            const pc = pnlDiff>=0?'var(--green)' :'var(--red)';
+            return '<div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">'
+              + '<div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:8px;">🆚 AI vs NO-AI</div>'
+              + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:10px;">'
+              + '<div style="background:rgba(255,255,255,0.03);padding:8px;border-radius:6px;">'           + '<div style="color:var(--text3);font-size:9px;margin-bottom:4px;">WIN RATE</div>'                 + '<div style="color:var(--green);">AI: ' + aiWR + '%</div>'                                         + '<div style="color:var(--text2);">No AI: ' + noAiWR + '%</div>'                                    + '<div style="color:' + wc  + ';font-weight:600;">' + (wrDiff>=0?'+':'')  + wrDiff  + '%</div></div>'
+              + '<div style="background:rgba(255,255,255,0.03);padding:8px;border-radius:6px;">'           + '<div style="color:var(--text3);font-size:9px;margin-bottom:4px;">AVG P&L</div>'                   + '<div style="color:var(--green);">AI: $' + aiAvg + '</div>'                                       + '<div style="color:var(--text2);">No AI: $' + noAiAvg + '</div>'                                  + '<div style="color:' + pc  + ';font-weight:600;">' + (pnlDiff>=0?'+':'') + '$' + pnlDiff + '</div></div>'
+              + '<div style="background:rgba(255,255,255,0.03);padding:8px;border-radius:6px;">'           + '<div style="color:var(--text3);font-size:9px;margin-bottom:4px;">TRADES</div>'                   + '<div style="color:var(--green);">AI: ' + aiCount + '</div>'                                       + '<div style="color:var(--text2);">No AI: ' + noAiCount + '</div></div>'                          + '</div></div>';
+          })()}
         </div>`;
     })()}
 
