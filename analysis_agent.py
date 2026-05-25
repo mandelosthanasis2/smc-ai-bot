@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN  = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT   = os.environ.get("TELEGRAM_CHAT_ID", "")
-BOT_URL         = os.environ.get("BOT_URL", "https://smc-ai-bot-production.up.railway.app")
+BOT_URL         = os.environ.get("BOT_URL", "https://web-production-85af7.up.railway.app")
 GREECE_TZ       = ZoneInfo("Europe/Athens")
 claude          = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 MODEL           = "claude-haiku-4-5-20251001"   # fast & cheap for agents
@@ -44,7 +44,7 @@ def ask_claude(system: str, user: str) -> str:
     try:
         resp = claude.messages.create(
             model=MODEL,
-            max_tokens=400,
+            max_tokens=250,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -55,16 +55,37 @@ def ask_claude(system: str, user: str) -> str:
 
 
 def fetch_bot_data() -> dict:
-    """Pull live state from all 4 strategy endpoints."""
-    data = {}
-    for endpoint, key in [("/api", "A"), ("/api/b", "B"), ("/api/c", "C"), ("/api/d", "D")]:
-        try:
-            r = requests.get(BOT_URL + endpoint, timeout=8)
-            data[key] = r.json()
-        except Exception as e:
-            log.warning(f"Cannot reach {endpoint}: {e}")
-            data[key] = {}
-    return data
+    """
+    Παίρνει live state απευθείας από τα bot objects (ίδια process).
+    Fallback στο HTTP αν δεν μπορεί να κάνει import.
+    """
+    try:
+        from bot import state, state_b, state_c, state_d, rt
+        # Προσθέτουμε live price/RSI από το WebSocket object
+        data_a = dict(state)
+        data_a["price"]    = rt.price   if rt.price   > 0  else state.get("current_price", 0)
+        data_a["rsi_1h"]   = round(rt.rsi_1h,  2) if hasattr(rt, "rsi_1h")  else state.get("current_rsi", 0)
+        data_a["rsi_15m"]  = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
+        data_a["box_high"] = state.get("box", {}).get("high", 0) if state.get("box") else 0
+        data_a["box_low"]  = state.get("box", {}).get("low",  0) if state.get("box") else 0
+        data_a["mid"]      = state.get("box", {}).get("mid",  0) if state.get("box") else 0
+        return {
+            "A": data_a,
+            "B": dict(state_b),
+            "C": dict(state_c),
+            "D": dict(state_d),
+        }
+    except Exception as e:
+        log.warning(f"Direct import failed: {e} — falling back to HTTP")
+        data = {}
+        for endpoint, key in [("/api", "A"), ("/api/b", "B"), ("/api/c", "C"), ("/api/d", "D")]:
+            try:
+                r = requests.get(BOT_URL + endpoint, timeout=8)
+                data[key] = r.json()
+            except Exception as e2:
+                log.warning(f"Cannot reach {endpoint}: {e2}")
+                data[key] = {}
+        return data
 
 
 def fetch_btc_news() -> str:
@@ -112,7 +133,7 @@ def agent_technical(data: dict, price: float, rsi_1h: float, rsi_15m: float) -> 
     box_l = a.get("box_low", "?")
     mid   = a.get("mid", "?")
     return ask_claude(
-        "Είσαι crypto technical analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
+        "You are a crypto technical analyst. Be concise, max 4 lines.",
         f"""BTC current price: ${price:,.2f}
 RSI 1H: {rsi_1h} | RSI 15m: {rsi_15m}
 Daily Box: {box_l} - {box_h} | MID: {mid}
@@ -123,7 +144,7 @@ Give a brief technical outlook: trend, key levels, bias (bullish/bearish/neutral
 
 def agent_sentiment(news: str, fear_greed: str) -> str:
     return ask_claude(
-        "Είσαι crypto sentiment analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
+        "You are a crypto sentiment analyst. Be concise, max 4 lines.",
         f"""Fear & Greed Index: {fear_greed}
 
 Latest BTC news:
@@ -135,7 +156,7 @@ Summarize market sentiment: bullish/bearish/neutral and why."""
 
 def agent_onchain(funding: str, price: float) -> str:
     return ask_claude(
-        "Είσαι crypto on-chain analyst. Απάντησε ΜΟΝΟ στα ελληνικά. Σύντομα, max 4 γραμμές.",
+        "You are a crypto on-chain analyst. Be concise, max 4 lines.",
         f"""BTC Price: ${price:,.2f}
 Funding Rate: {funding}
 
@@ -146,11 +167,11 @@ Interpret the funding rate signal. Is the market overheated long or short? What 
 def agent_debate(technical: str, sentiment: str, onchain: str) -> tuple[str, str]:
     """Bull and Bear agents debate based on the 3 reports."""
     bull = ask_claude(
-        "Είσαι BULL trader. Κάνε το ισχυρότερο δυνατό επιχείρημα για ΑΓΟΡΑ BTC τώρα. ΜΟΝΟ ελληνικά, max 3 γραμμές.",
+        "Είσαι BULL trader. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ headers. 1 επιχείρημα.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     bear = ask_claude(
-        "Είσαι BEAR trader. Κάνε το ισχυρότερο δυνατό επιχείρημα για ΠΩΛΗΣΗ/ΑΠΟΦΥΓΗ BTC τώρα. ΜΟΝΟ ελληνικά, max 3 γραμμές.",
+        "Είσαι BEAR trader. ΜΟΝΟ ελληνικά. MAX 2 γραμμές. ΟΧΙ headers. 1 επιχείρημα.",
         f"Technical report:\n{technical}\n\nSentiment report:\n{sentiment}\n\nOn-chain report:\n{onchain}"
     )
     return bull, bear
@@ -171,18 +192,10 @@ def agent_verdict(technical: str, sentiment: str, onchain: str,
     bot_state = "\n".join(states)
 
     return ask_claude(
-        f"""Είσαι senior risk manager για BTC futures trading bot.
-Session: {session}
-Δώσε τελικό verdict και συγκεκριμένη συμβουλή για κάθε στρατηγική (A=Daily Box, B=1H Box auto, C=1H Box webhook, D=webhook).
-ΜΟΝΟ στα ελληνικά. Χρησιμοποίησε αυτό το format:
-VERDICT: [ΑΝΟΔΙΚΟ/ΚΑΘΟΔΙΚΟ/ΟΥΔΕΤΕΡΟ]
-ΕΜΠΙΣΤΟΣΥΝΗ: [ΥΨΗΛΗ/ΜΕΤΡΙΑ/ΧΑΜΗΛΗ]
-Στρατηγική A: [συμβουλή]
-Στρατηγική B: [συμβουλή]
-Στρατηγική C: [συμβουλή]
-Στρατηγική D: [συμβουλή]
-ΠΡΟΣΟΧΗ: [ένας βασικός κίνδυνος]
-Max 10 γραμμές.""",
+        f"""Είσαι risk manager για BTC bot. Session: {session}. ΜΟΝΟ ελληνικά. ΟΧΙ markdown. MAX 6 γραμμές:
+VERDICT: [ΑΝΟΔΙΚΟ/ΚΑΘΟΔΙΚΟ/ΟΥΔΕΤΕΡΟ] | ΕΜΠΙΣΤΟΣΥΝΗ: [ΥΨΗΛΗ/ΜΕΤΡΙΑ/ΧΑΜΗΛΗ]
+A: [1 γραμμή] B: [1 γραμμή] C: [1 γραμμή] D: [1 γραμμή]
+ΠΡΟΣΟΧΗ: [1 κίνδυνος]""",
         f"""Technical:\n{technical}
 
 Sentiment:\n{sentiment}
@@ -210,9 +223,9 @@ def run_briefing(session: str):
 
     # Extract price & RSI from strategy A
     a_data  = bot_data.get("A", {})
-    price   = float(a_data.get("price", 0))
-    rsi_1h  = a_data.get("rsi_1h", "?")
-    rsi_15m = a_data.get("rsi_15m", "?")
+    price   = float(a_data.get("price") or a_data.get("current_price") or 0)
+    rsi_1h  = a_data.get("rsi_1h") or a_data.get("current_rsi") or "?"
+    rsi_15m = a_data.get("rsi_15m") or "?"
 
     # 2. Run 5 agents
     log.info("Running agents...")
@@ -248,7 +261,19 @@ def run_briefing(session: str):
 <b>✅ VERDICT:</b>
 {verdict}"""
 
-    send_telegram(msg)
+    # Split αν το μήνυμα είναι πολύ μεγάλο για Telegram (max 4096)
+    MAX_LEN = 3800
+    if len(msg) <= MAX_LEN:
+        send_telegram(msg)
+    else:
+        # Κόβουμε στη μέση με λογικό σημείο
+        mid = msg.rfind("\n\n", 0, MAX_LEN)
+        if mid == -1:
+            mid = msg.rfind("\n", 0, MAX_LEN)
+        if mid == -1:
+            mid = MAX_LEN
+        send_telegram(msg[:mid])
+        send_telegram(msg[mid:].strip())
     log.info(f"{session} briefing sent!")
 
 
