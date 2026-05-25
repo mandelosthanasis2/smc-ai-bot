@@ -380,12 +380,12 @@ setInterval(upd,10000);upd();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)upd()});
 
 function resetStrategy(strategy) {
-  if (!confirm('Reset Strategy ' + strategy + ' στα $10,000;\nΘα διαγραφεί το trade history!')) return;
-  fetch('/reset/' + strategy, {method:'POST',headers:{'Content-Type':'application/json'}})
+  if (!confirm('Reset Strategy ' + strategy + ' - Θα διαγραφουν τα trades!')) return;
+  fetch('/reset/' + strategy, {method:'POST'})
     .then(r=>r.json())
     .then(d=>{
-      if(d.ok){alert('✅ Strategy ' + strategy + ' reset στα $10,000');location.reload();}
-      else{alert('❌ Error: ' + (d.error||'unknown'));}
+      if(d.ok){alert('Strategy ' + strategy + ' reset OK');location.reload();}
+      else{alert('Error: ' + (d.error||'unknown'));}
     }).catch(e=>alert('Error: '+e));
 }
 </script>
