@@ -836,8 +836,9 @@ def finalize_trade_a(price, result, note=""):
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price)) * pos["qty"], 2)
     state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
     state["balance"]   = round(state["balance"]   + pnl, 2)
-    if result == "WIN": state["wins"]   += 1
-    else:               state["losses"] += 1
+    if result == "WIN":         state["wins"]   += 1
+    elif result == "LOSS":      state["losses"] += 1
+    # BREAK EVEN: δεν μετράει ούτε win ούτε loss
     trade = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
@@ -919,8 +920,19 @@ def check_position_a(price):
     # Normal SL
     hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
     if hit_sl:
-        result = "WIN" if pos["sl"]>=entry else "LOSS"
-        finalize_trade_a(pos["sl"], result, "STOP LOSS")
+        if abs(pos["sl"] - entry) < 0.01 * entry:  # SL within 1% of entry = break even
+            result = "BREAK EVEN"
+            note   = "BREAK EVEN"
+        elif pos["sl"] > entry and is_long:
+            result = "WIN"
+            note   = "STOP LOSS (profit)"
+        elif pos["sl"] < entry and not is_long:
+            result = "WIN"
+            note   = "STOP LOSS (profit)"
+        else:
+            result = "LOSS"
+            note   = "STOP LOSS"
+        finalize_trade_a(pos["sl"], result, note)
 
 # =================================================================
 # POSITION MANAGEMENT - Strategy B (2 phases)
@@ -932,8 +944,9 @@ def finalize_trade_b(price, result, note=""):
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
     state_b["pnl_total"] = round(state_b["pnl_total"]+pnl, 2)
     state_b["balance"]   = round(state_b["balance"]  +pnl, 2)
-    if result=="WIN": state_b["wins"]   += 1
-    else:             state_b["losses"] += 1
+    if result == "WIN":    state_b["wins"]   += 1
+    elif result == "LOSS": state_b["losses"] += 1
+    # BREAK EVEN: δεν μετράει ούτε win ούτε loss
     trade_b = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
@@ -978,10 +991,18 @@ def check_position_b(price):
     hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
     hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
 
-    if hit_tp: finalize_trade_b(tp,         "WIN",  "TAKE PROFIT")
+    if hit_tp: finalize_trade_b(tp, "WIN", "TAKE PROFIT")
     elif hit_sl:
-        result = "WIN" if pos["sl"]>=entry else "LOSS"
-        finalize_trade_b(pos["sl"], result, "STOP LOSS")
+        if abs(pos["sl"] - entry) < 0.01 * entry:  # break even
+            result = "BREAK EVEN"
+            note   = "BREAK EVEN"
+        elif (is_long and pos["sl"] > entry) or (not is_long and pos["sl"] < entry):
+            result = "WIN"
+            note   = "STOP LOSS (profit)"
+        else:
+            result = "LOSS"
+            note   = "STOP LOSS"
+        finalize_trade_b(pos["sl"], result, note)
 
 # =================================================================
 # STRATEGY A - Daily box + 1H RSI
@@ -1003,7 +1024,8 @@ def run_strategy_a():
         if state["position"]:
             pos = state["position"]
             pnl = ((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"]
-            state["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}"
+            trailing_tag = " | 🚀 TRAILING" if pos.get("trailing_active") else ""
+            state["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}{trailing_tag}"
             return
 
     candles_4h = get_candles("4H", 500)
