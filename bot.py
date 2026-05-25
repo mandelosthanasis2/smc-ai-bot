@@ -113,6 +113,31 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
         log.error(f"[AIValidator] Error: {e} — defaulting to GO")
         return "GO", 1.0, None
 
+def _send_ai_trade_summary(strategy, side, entry_price, sl, tp,
+                           ai_action, ai_result, shadow_active):
+    """Στέλνει AI analysis Telegram message σε κάθε νέο trade."""
+    icons = {"GO":"✅","SKIP":"🚫","REDUCE_SIZE":"📉","DOUBLE_SIZE":"🚀"}
+    icon  = icons.get(ai_action, "🤖")
+    shadow_tag = " SHADOW" if shadow_active else " ACTIVE"
+    if ai_result is None:
+        send_telegram(icon + " [AI] " + strategy + " " + side + " — Validator off")
+        return
+    conf   = str(int(ai_result.confidence * 100)) + "%"
+    r      = ai_result.reasoning or {}
+    tech   = str(r.get("technical",   "N/A"))[:80]
+    news   = str(r.get("news",        "N/A"))[:80]
+    coord  = str(r.get("coordinator", "N/A"))[:120]
+    parts  = [
+        icon + " <b>[AI" + shadow_tag + "] " + strategy + " " + ai_action + "</b>",
+        "<b>" + side + "</b> @ $" + str(int(entry_price)) + " | Conf: " + conf,
+        "",
+        "📊 Tech: " + tech,
+        "📰 News: " + news,
+        "🎯 " + coord,
+    ]
+    send_telegram("\n".join(parts))
+
+
 # -- LOGGING ------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -1087,6 +1112,7 @@ def run_strategy_a():
             state["last_signal"]="SHORT"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🔴 <b>[A] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bear_div else 'Normal'}")
+            _send_ai_trade_summary("A","SHORT",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
         return
 
     # LONG at PDL
@@ -1124,6 +1150,7 @@ def run_strategy_a():
             state["last_signal"]="LONG"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🟢 <b>[A] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bull_div else 'Normal'}")
+            _send_ai_trade_summary("A","LONG",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
         return
 
     div_txt = "Div!" if (bull_div or bear_div) else "No div"
@@ -1259,6 +1286,7 @@ def run_strategy_b():
             state_b["position"]={"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                    "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                                    "order_id":order_id,"has_divergence":bear_div}
+            _send_ai_trade_summary("B","SHORT",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
             state_b["last_signal"]="SHORT"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
             send_telegram(f"🔴 <b>[B] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bear_div else ''}")
@@ -1288,6 +1316,7 @@ def run_strategy_b():
             state_b["position"]={"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                    "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                                    "order_id":order_id,"has_divergence":bull_div}
+            _send_ai_trade_summary("B","LONG",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
             state_b["last_signal"]="LONG"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
             send_telegram(f"🟢 <b>[B] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bull_div else ''}")
