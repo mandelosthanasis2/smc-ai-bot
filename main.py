@@ -398,6 +398,7 @@ def render_dash(active, api_url, sc, s, extra={}):
     return render_template_string(TMPL,
         css=CSS, sidebar=sb(active,username,role), mobile_nav=mn(active),
         sl=active.upper(), sc=sc, api_url=api_url,
+        strategy_id=active.upper(),
         mode=s.get('mode','PAPER'),
         balance=s.get('balance',10000), pnl=s.get('pnl_total',0),
         wins=wins, losses=losses, wr=round(wins/total*100) if total>0 else 0,
@@ -556,10 +557,11 @@ def _wh_c(sig, price=None, data=None):
 
 # ── RESET ENDPOINTS ─────────────────────────────────────────────
 @app.route('/reset/<strategy>', methods=['POST'])
-@login_required
 def reset_strategy(strategy):
+    # Ελέγχουμε session manually για να επιστρέφουμε JSON (όχι redirect)
+    if 'username' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
     """Reset μιας στρατηγικής στα default values."""
-    from flask_login import current_user
     from bot import state, state_b, state_c, state_d
     from bot import save_state, save_state_b, save_state_c, save_state_d
     from bot import DEFAULT_STATE, DEFAULT_STATE_B
@@ -594,6 +596,16 @@ def reset_strategy(strategy):
             "trades": [], "last_signal": "WAIT",
         })
         db_save_state("C", state_c)
+        # Διαγραφή trades από DB
+        try:
+            from database import get_conn
+            conn = get_conn()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM trades WHERE strategy=%s AND user_id=%s", ("C", 1))
+                conn.commit(); conn.close()
+        except Exception as e:
+            log.warning(f"Reset C trades DB error: {e}")
         save_state_c()
     elif s == 'D':
         state_d.update({
