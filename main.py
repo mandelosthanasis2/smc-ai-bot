@@ -219,6 +219,10 @@ TMPL = """<!DOCTYPE html>
     <span class="bx bx-gray">BTCUSDT PERP</span>
     <span class="bx bx-gray">BITGET</span>
     <span class="bx bx-gray" id="s-cycle">{{ last_cycle }}</span>
+    <button onclick="resetStrategy('{{ strategy_id }}')"
+      style="background:rgba(255,255,255,.05);color:var(--t2);border:1px solid var(--b);padding:4px 10px;border-radius:5px;font-size:9px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:1px;">
+      🔄 RESET
+    </button>
   </div>
 </div>
 
@@ -374,6 +378,16 @@ function upd(){
 }
 setInterval(upd,10000);upd();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)upd()});
+
+function resetStrategy(strategy) {
+  if (!confirm('Reset Strategy ' + strategy + ' στα $10,000;\nΘα διαγραφεί το trade history!')) return;
+  fetch('/reset/' + strategy, {method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){alert('✅ Strategy ' + strategy + ' reset στα $10,000');location.reload();}
+      else{alert('❌ Error: ' + (d.error||'unknown'));}
+    }).catch(e=>alert('Error: '+e));
+}
 </script>
 </body></html>"""
 
@@ -427,7 +441,17 @@ def strategy_d():
 
 @app.route('/api')
 @login_required
-def api(): return jsonify(state)
+def api():
+    from bot import rt
+    data = dict(state)
+    # Προσθήκη live price/RSI για το analysis_agent.py
+    data["price"]    = rt.price if rt.price > 0 else state.get("current_price", 0)
+    data["rsi_1h"]   = round(rt.rsi_1h, 2) if hasattr(rt, "rsi_1h") else state.get("current_rsi", 0)
+    data["rsi_15m"]  = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
+    data["box_high"] = state.get("box", {}).get("high", 0)
+    data["box_low"]  = state.get("box", {}).get("low", 0)
+    data["mid"]      = state.get("box", {}).get("mid", 0)
+    return jsonify(data)
 
 @app.route('/api/b')
 @login_required
@@ -461,19 +485,6 @@ def _wh_d(sig, price=None, data=None):
     sl=round(sl,2); tp1=round(tp1,2); tp2=round(tp2,2)
     cf=data.get('confluence','normal')=='strong'
     qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
-    # ── AI Validator ──────────────────────────────────────────
-    from bot import _ai_validate, rt as _rt
-    _ai_act,_ai_mult,_ai_res = _ai_validate(
-        strategy="D", side=sig,
-        entry_price=p, stop_loss=sl, take_profit=tp1,
-        rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
-        box=None, has_divergence=cf,
-        trades=state_d.get("trades",[]), balance=state_d["balance"],
-        extra={"tp1":tp1,"tp2":tp2,"confluence":data.get("confluence","normal")},
-    )
-    if _ai_act == "SKIP": return
-    if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
-    # ─────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
     if oid:
         state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False}
@@ -536,24 +547,65 @@ def _wh_c(sig, price=None, data=None):
     if sig=='SHORT' and (tp>=p or sl<=p): return
     if sig=='LONG'  and (tp<=p or sl>=p): return
     qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
-    # ── AI Validator ──────────────────────────────────────────
-    from bot import _ai_validate, rt as _rt
-    _ai_act,_ai_mult,_ai_res = _ai_validate(
-        strategy="C", side=sig,
-        entry_price=p, stop_loss=sl, take_profit=tp,
-        rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
-        box=state_c.get("box"), has_divergence=False,
-        trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
-    )
-    if _ai_act == "SKIP": return
-    if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
-    # ─────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
         state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid}
         state_c['last_signal']=sig; state_c['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_c()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
+
+# ── RESET ENDPOINTS ─────────────────────────────────────────────
+@app.route('/reset/<strategy>', methods=['POST'])
+@login_required
+def reset_strategy(strategy):
+    """Reset μιας στρατηγικής στα default values."""
+    from flask_login import current_user
+    from bot import state, state_b, state_c, state_d
+    from bot import save_state, save_state_b, save_state_c, save_state_d
+    from bot import DEFAULT_STATE, DEFAULT_STATE_B
+    from database import db_save_state
+
+    s = strategy.upper()
+    if s not in ('A','B','C','D'):
+        return jsonify({"error": "Invalid strategy"}), 400
+
+    reset_balance = 10000.0
+
+    if s == 'A':
+        state.update({
+            "balance": reset_balance, "pnl_total": 0,
+            "wins": 0, "losses": 0, "position": None,
+            "trades": [], "last_signal": "WAIT",
+        })
+        db_save_state("A", state)
+        save_state()
+    elif s == 'B':
+        state_b.update({
+            "balance": reset_balance, "pnl_total": 0,
+            "wins": 0, "losses": 0, "position": None,
+            "trades": [], "last_signal": "WAIT",
+        })
+        db_save_state("B", state_b)
+        save_state_b()
+    elif s == 'C':
+        state_c.update({
+            "balance": reset_balance, "pnl_total": 0,
+            "wins": 0, "losses": 0, "position": None,
+            "trades": [], "last_signal": "WAIT",
+        })
+        db_save_state("C", state_c)
+        save_state_c()
+    elif s == 'D':
+        state_d.update({
+            "balance": reset_balance, "pnl_total": 0,
+            "wins": 0, "losses": 0, "position": None,
+            "trades": [], "last_signal": "WAIT",
+        })
+        db_save_state("D", state_d)
+        save_state_d()
+
+    return jsonify({"ok": True, "strategy": s, "reset_to": reset_balance})
+
 
 @app.route('/webhook/a', methods=['POST'])
 def webhook_a():
