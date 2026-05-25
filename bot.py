@@ -945,18 +945,13 @@ def check_position_a(price):
     # Normal SL
     hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
     if hit_sl:
-        if abs(pos["sl"] - entry) < 0.01 * entry:  # SL within 1% of entry = break even
-            result = "BREAK EVEN"
-            note   = "BREAK EVEN"
-        elif pos["sl"] > entry and is_long:
-            result = "WIN"
-            note   = "STOP LOSS (profit)"
-        elif pos["sl"] < entry and not is_long:
-            result = "WIN"
-            note   = "STOP LOSS (profit)"
+        actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
+        if abs(actual_pnl) < 1.0:
+            result = "BREAK EVEN"; note = "BREAK EVEN"
+        elif actual_pnl > 0:
+            result = "WIN"; note = "STOP LOSS (profit)"
         else:
-            result = "LOSS"
-            note   = "STOP LOSS"
+            result = "LOSS"; note = "STOP LOSS"
         finalize_trade_a(pos["sl"], result, note)
 
 # =================================================================
@@ -1018,15 +1013,13 @@ def check_position_b(price):
 
     if hit_tp: finalize_trade_b(tp, "WIN", "TAKE PROFIT")
     elif hit_sl:
-        if abs(pos["sl"] - entry) < 0.01 * entry:  # break even
-            result = "BREAK EVEN"
-            note   = "BREAK EVEN"
-        elif (is_long and pos["sl"] > entry) or (not is_long and pos["sl"] < entry):
-            result = "WIN"
-            note   = "STOP LOSS (profit)"
+        actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
+        if abs(actual_pnl) < 1.0:
+            result = "BREAK EVEN"; note = "BREAK EVEN"
+        elif actual_pnl > 0:
+            result = "WIN"; note = "STOP LOSS (profit)"
         else:
-            result = "LOSS"
-            note   = "STOP LOSS"
+            result = "LOSS"; note = "STOP LOSS"
         finalize_trade_b(pos["sl"], result, note)
 
 # =================================================================
@@ -1167,8 +1160,9 @@ def finalize_trade_c(price, result, note=""):
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
     state_c["pnl_total"] = round(state_c["pnl_total"]+pnl, 2)
     state_c["balance"]   = round(state_c["balance"]  +pnl, 2)
-    if result=="WIN": state_c["wins"]   += 1
-    else:             state_c["losses"] += 1
+    if result == "WIN":    state_c["wins"]   += 1
+    elif result == "LOSS": state_c["losses"] += 1
+    # BREAK EVEN: δεν μετράει
     trade_c = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
@@ -1214,8 +1208,14 @@ def check_position_c(price):
 
     if hit_tp: finalize_trade_c(tp, "WIN", "TAKE PROFIT")
     elif hit_sl:
-        result = "WIN" if pos["sl"]>=entry else "LOSS"
-        finalize_trade_c(pos["sl"], result, "STOP LOSS")
+        actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
+        if abs(actual_pnl) < 1.0:
+            result = "BREAK EVEN"; note = "BREAK EVEN"
+        elif actual_pnl > 0:
+            result = "WIN"; note = "STOP LOSS (profit)"
+        else:
+            result = "LOSS"; note = "STOP LOSS"
+        finalize_trade_c(pos["sl"], result, note)
 
 # =================================================================
 # STRATEGY B - 1H box + 15m RSI
@@ -1414,8 +1414,14 @@ def check_position_d(price):
     if hit_tp2:
         finalize_trade_d(tp2, "WIN", "TP2")
     elif hit_sl:
-        result = "WIN" if (is_long and sl >= entry) or (not is_long and sl <= entry) else "LOSS"
-        finalize_trade_d(sl, result, "STOP LOSS")
+        actual_pnl = ((sl - entry) if is_long else (entry - sl)) * pos["qty"]
+        if abs(actual_pnl) < 1.0:
+            result = "BREAK EVEN"; note = "BREAK EVEN"
+        elif actual_pnl > 0:
+            result = "WIN"; note = "STOP LOSS (profit)"
+        else:
+            result = "LOSS"; note = "STOP LOSS"
+        finalize_trade_d(sl, result, note)
 
 # =================================================================
 # BOT LOOP
