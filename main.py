@@ -582,7 +582,7 @@ def _wh_c(sig, price=None, data=None):
         _send_ai_trade_summary("C", sig, p, sl, tp, _ai_act, _ai_res, AI_SHADOW_MASTER)
 
 
-def _reset_trades_db(strategy: str, user_id: int = 1):
+def _reset_trades_db(strategy: str):
     """Διαγράφει trades από DB για μια στρατηγική."""
     try:
         from database import get_conn
@@ -590,8 +590,8 @@ def _reset_trades_db(strategy: str, user_id: int = 1):
         if conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM trades WHERE strategy=%s AND user_id=%s",
-                    (strategy, user_id)
+                    "DELETE FROM trades WHERE strategy=%s",
+                    (strategy,)
                 )
             conn.commit()
             conn.close()
