@@ -870,6 +870,10 @@ def finalize_trade_a(price, result, note=""):
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "news_score": pos.get("news_score", 0),
         "divergence": pos.get("has_divergence", False), "note": note,
+        "ai_action": pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning": pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
     }
     state["trades"].append(trade)
     db_save_trade("A", trade)
@@ -972,6 +976,10 @@ def finalize_trade_b(price, result, note=""):
         "pnl": pnl, "result": result,
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_divergence", False), "note": note,
+        "ai_action": pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning": pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
     }
     state_b["trades"].append(trade_b)
     db_save_trade("B", trade_b)
@@ -1101,7 +1109,9 @@ def run_strategy_a():
             state["position"] = {"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                                   "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bear_div,
-                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE}
+                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE,
+                                  "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                  "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             state["last_signal"]="SHORT"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🔴 <b>[A] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bear_div else 'Normal'}")
@@ -1139,7 +1149,9 @@ def run_strategy_a():
             state["position"] = {"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                                   "order_id":order_id,"news_score":score,"news_summary":summary,"has_divergence":bull_div,
-                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE}
+                                  "ai_action":ai_action,"ai_shadow":AI_SHADOW_MODE,
+                                  "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                  "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             state["last_signal"]="LONG"; state["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🟢 <b>[A] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\n{'🔥DIV' if bull_div else 'Normal'}")
@@ -1168,6 +1180,10 @@ def finalize_trade_c(price, result, note=""):
         "pnl": pnl, "result": result,
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_divergence", False), "note": note,
+        "ai_action": pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning": pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
     }
     state_c["trades"].append(trade_c)
     db_save_trade("C", trade_c)
@@ -1285,7 +1301,10 @@ def run_strategy_b():
         if order_id:
             state_b["position"]={"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                    "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bear_div}
+                                   "order_id":order_id,"has_divergence":bear_div,
+                                   "ai_action":ai_action,"ai_shadow":AI_SHADOW_MASTER,
+                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             _send_ai_trade_summary("B","SHORT",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
             state_b["last_signal"]="SHORT"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
@@ -1315,7 +1334,10 @@ def run_strategy_b():
         if order_id:
             state_b["position"]={"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
                                    "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bull_div}
+                                   "order_id":order_id,"has_divergence":bull_div,
+                                   "ai_action":ai_action,"ai_shadow":AI_SHADOW_MASTER,
+                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             _send_ai_trade_summary("B","LONG",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
             state_b["last_signal"]="LONG"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
@@ -1348,6 +1370,10 @@ def finalize_trade_d(price, result, note=""):
         "time":       datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "divergence": pos.get("has_confluence", False),
         "note":       note,
+        "ai_action":     pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning":  pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
     }
     state_d["trades"].append(trade_d)
     db_save_trade("D", trade_d)
