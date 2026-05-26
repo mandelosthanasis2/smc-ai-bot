@@ -500,7 +500,11 @@ def _wh_d(sig, price=None, data=None):
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
     if oid:
-        state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False}
+        import json as _json
+        state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False,
+                            'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
+                            'ai_confidence': (_ai_res.confidence if _ai_res else 0),
+                            'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
         state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
@@ -574,7 +578,10 @@ def _wh_c(sig, price=None, data=None):
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
-        state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER}
+        import json as _json
+        state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
+                            'ai_confidence': (_ai_res.confidence if _ai_res else 0),
+                            'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
         state_c['last_signal']=sig; state_c['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_c()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
