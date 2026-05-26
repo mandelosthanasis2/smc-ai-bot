@@ -581,6 +581,24 @@ def _wh_c(sig, price=None, data=None):
         from bot import _send_ai_trade_summary
         _send_ai_trade_summary("C", sig, p, sl, tp, _ai_act, _ai_res, AI_SHADOW_MASTER)
 
+
+def _reset_trades_db(strategy: str, user_id: int = 1):
+    """Διαγράφει trades από DB για μια στρατηγική."""
+    try:
+        from database import get_conn
+        conn = get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM trades WHERE strategy=%s AND user_id=%s",
+                    (strategy, user_id)
+                )
+            conn.commit()
+            conn.close()
+            log.info(f"Reset trades DB for strategy {strategy}")
+    except Exception as e:
+        log.warning(f"Reset {strategy} trades DB error: {e}")
+
 # ── RESET ENDPOINTS ─────────────────────────────────────────────
 @app.route('/reset/<strategy>', methods=['POST'])
 def reset_strategy(strategy):
@@ -606,6 +624,7 @@ def reset_strategy(strategy):
             "trades": [], "last_signal": "WAIT",
         })
         db_save_state("A", state)
+        _reset_trades_db("A")
         save_state()
     elif s == 'B':
         state_b.update({
@@ -614,6 +633,7 @@ def reset_strategy(strategy):
             "trades": [], "last_signal": "WAIT",
         })
         db_save_state("B", state_b)
+        _reset_trades_db("B")
         save_state_b()
     elif s == 'C':
         state_c.update({
@@ -622,16 +642,7 @@ def reset_strategy(strategy):
             "trades": [], "last_signal": "WAIT",
         })
         db_save_state("C", state_c)
-        # Διαγραφή trades από DB
-        try:
-            from database import get_conn
-            conn = get_conn()
-            if conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM trades WHERE strategy=%s AND user_id=%s", ("C", 1))
-                conn.commit(); conn.close()
-        except Exception as e:
-            log.warning(f"Reset C trades DB error: {e}")
+        _reset_trades_db("C")
         save_state_c()
     elif s == 'D':
         state_d.update({
@@ -640,6 +651,7 @@ def reset_strategy(strategy):
             "trades": [], "last_signal": "WAIT",
         })
         db_save_state("D", state_d)
+        _reset_trades_db("D")
         save_state_d()
 
     return jsonify({"ok": True, "strategy": s, "reset_to": reset_balance})
