@@ -78,18 +78,77 @@ def fetch_bot_data() -> dict:
 
 
 def fetch_btc_news() -> str:
-    """Fetch latest BTC headlines from CryptoPanic (free, no key needed)."""
+    """
+    Fetch BTC headlines από πολλαπλές πηγές:
+    1. CryptoCompare (free, no key)
+    2. RSS feeds (CoinDesk, CoinTelegraph, Decrypt)
+    Επιστρέφει τα 8 πιο πρόσφατα headlines.
+    """
+    headlines = []
+
+    # ── Πηγή 1: CryptoCompare (χωρίς key) ───────────────────────
     try:
         r = requests.get(
-            "https://cryptopanic.com/api/v1/posts/?auth_token=free&currencies=BTC&kind=news&limit=8",
+            "https://min-api.cryptocompare.com/data/v2/news/"
+            "?lang=EN&categories=BTC&sortOrder=latest&limit=5",
             timeout=8,
         )
-        posts = r.json().get("results", [])
-        headlines = [p.get("title", "") for p in posts[:8]]
-        return "\n".join(f"- {h}" for h in headlines) if headlines else "No news available"
+        data = r.json()
+        if data.get("Type") == 100:
+            for item in data.get("Data", [])[:5]:
+                title = item.get("title", "")
+                if title:
+                    headlines.append(title)
     except Exception as e:
-        log.warning(f"News fetch error: {e}")
-        return "News unavailable"
+        log.debug(f"CryptoCompare news error: {e}")
+
+    # ── Πηγή 2: RSS feeds ────────────────────────────────────────
+    if len(headlines) < 8:
+        rss_feeds = [
+            "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            "https://cointelegraph.com/rss",
+            "https://decrypt.co/feed",
+        ]
+        try:
+            import feedparser
+            for feed_url in rss_feeds:
+                if len(headlines) >= 8:
+                    break
+                try:
+                    feed = feedparser.parse(feed_url)
+                    for entry in feed.entries[:3]:
+                        title = entry.get("title", "")
+                        # Φιλτράρουμε μόνο BTC-σχετικά
+                        if title and any(kw in title.upper() for kw in
+                                        ["BTC", "BITCOIN", "CRYPTO", "BLOCKCHAIN", "ETF",
+                                         "FED", "RATE", "MARKET", "BULL", "BEAR"]):
+                            if title not in headlines:
+                                headlines.append(title)
+                except Exception:
+                    continue
+        except ImportError:
+            log.debug("feedparser not installed")
+
+    # ── Fallback: Reddit r/Bitcoin ────────────────────────────────
+    if not headlines:
+        try:
+            r = requests.get(
+                "https://www.reddit.com/r/Bitcoin/hot.json?limit=5",
+                headers={"User-Agent": "NRMBot/1.0"},
+                timeout=8,
+            )
+            posts = r.json().get("data", {}).get("children", [])
+            for p in posts[:5]:
+                title = p.get("data", {}).get("title", "")
+                if title:
+                    headlines.append(title)
+        except Exception as e:
+            log.debug(f"Reddit fallback error: {e}")
+
+    if not headlines:
+        return "Δεν υπάρχουν διαθέσιμα νέα"
+
+    return "\n".join(f"• {h[:100]}" for h in headlines[:8])
 
 
 def fetch_fear_greed() -> str:
