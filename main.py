@@ -297,7 +297,12 @@ TMPL = """<!DOCTYPE html>
       <div class="pr"><span class="pk">Entry</span><span class="pv">${{ "{:,.2f}".format(position.entry) }}</span></div>
       {% if position.tp is defined %}<div class="pr"><span class="pk">Take Profit</span><span class="pv tg">${{ "{:,.2f}".format(position.tp) }}</span></div>{% endif %}
       {% if position.tp1 is defined %}<div class="pr"><span class="pk">TP1 (2:1)</span><span class="pv tg">${{ "{:,.2f}".format(position.tp1) }}</span></div><div class="pr"><span class="pk">TP2 (3:1)</span><span class="pv tte">${{ "{:,.2f}".format(position.tp2) }}</span></div>{% endif %}
+      {% if position.trailing_active %}
+      <div class="pr"><span class="pk" style="color:#ffc800">🚀 Trailing SL</span><span class="pv" style="color:#ffc800">${{ "{:,.2f}".format(position.trailing_sl) }}</span></div>
+      <div class="pr"><span class="pk">Peak Price</span><span class="pv tg">${{ "{:,.2f}".format(position.trailing_peak) }}</span></div>
+      {% else %}
       <div class="pr"><span class="pk">Stop Loss</span><span class="pv tr">${{ "{:,.2f}".format(position.sl) }}</span></div>
+      {% endif %}
       <div class="pr"><span class="pk">Size (BTC)</span><span class="pv">{{ position.qty }}</span></div>
       <div class="pr"><span class="pk">Opened</span><span class="pv td">{{ position.time }}</span></div>
       {% if position.has_divergence %}<div class="pr"><span class="pk">Divergence</span><span class="pv ty">🔥 DOUBLE</span></div>{% endif %}
