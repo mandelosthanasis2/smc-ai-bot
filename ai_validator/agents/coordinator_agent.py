@@ -195,7 +195,12 @@ Rules:
         )
         text = resp.content[0].text.strip()
         text = text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(text)
+        # Εξαγωγή μόνο του JSON object — αγνοεί κείμενο πριν/μετά
+        start = text.find('{')
+        end   = text.rfind('}')
+        if start == -1 or end == -1:
+            raise ValueError(f"No JSON object found in response: {text[:100]}")
+        data = json.loads(text[start:end+1])
 
         action = data.get("action", "GO")
         if action not in ("GO", "SKIP", "REDUCE_SIZE", "DOUBLE_SIZE"):
