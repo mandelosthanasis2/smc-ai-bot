@@ -147,6 +147,7 @@ def validate_signal(
             anthropic_api_key = api_key,
             candles_4h        = context.get("candles_4h", []),
             extra_context     = context.get("extra", {}),
+            candles_15m       = context.get("candles_15m", []),
         )
     except Exception as e:
         log.error(f"[Validator] Technical agent error: {e}")
