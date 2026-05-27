@@ -795,6 +795,10 @@ state_b = load_state_b()
 state_c = load_state_c()
 state_d = load_state_d()
 
+# Race condition guards — αποτρέπουν διπλό AI call όταν το scheduler τρέχει κάθε 30s
+_b_entering = False
+_a_entering = False
+
 # =================================================================
 # NEWS
 # =================================================================
@@ -1279,6 +1283,8 @@ def run_strategy_b():
     log.info(f"[B] Price={price:.2f} RSI15m={rsi_15m} 1H=[{box['low']:.0f}-{box['high']:.0f}]")
 
     # SHORT at 1H High
+    global _b_entering
+    if _b_entering: return  # Race condition guard
     at_high = (price>=box["high"]*0.995) and (price<=box["high"]*1.015)
     if at_high and rsi_15m>70 and box["mid"]<price:
         tp_dist = price - box["mid"]
@@ -1287,6 +1293,7 @@ def run_strategy_b():
         risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
         # ── AI Validator ──────────────────────────────────────
+        _b_entering = True
         ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="B", side="SHORT",
             entry_price=price, stop_loss=sl, take_profit=tp,
@@ -1294,7 +1301,7 @@ def run_strategy_b():
             box=box, has_divergence=bear_div,
             trades=state_b.get("trades",[]), balance=balance,
         )
-        if ai_action == "SKIP": return
+        if ai_action == "SKIP": _b_entering = False; return
         if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
         # ─────────────────────────────────────────────────────
         order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
@@ -1309,6 +1316,7 @@ def run_strategy_b():
             state_b["last_signal"]="SHORT"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
             send_telegram(f"🔴 <b>[B] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bear_div else ''}")
+        _b_entering = False
         return
 
     # LONG at 1H Low
@@ -1320,6 +1328,7 @@ def run_strategy_b():
         risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
         qty      = calc_qty(balance, risk_pct, price, sl)
         # ── AI Validator ──────────────────────────────────────
+        _b_entering = True
         ai_action, ai_mult, _ai_result = _ai_validate(
             strategy="B", side="LONG",
             entry_price=price, stop_loss=sl, take_profit=tp,
@@ -1327,7 +1336,7 @@ def run_strategy_b():
             box=box, has_divergence=bull_div,
             trades=state_b.get("trades",[]), balance=balance,
         )
-        if ai_action == "SKIP": return
+        if ai_action == "SKIP": _b_entering = False; return
         if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
         # ─────────────────────────────────────────────────────
         order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
@@ -1342,6 +1351,7 @@ def run_strategy_b():
             state_b["last_signal"]="LONG"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state_b()
             send_telegram(f"🟢 <b>[B] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bull_div else ''}")
+        _b_entering = False
         return
 
     div_txt = "Div!" if (bull_div or bear_div) else "No div"
