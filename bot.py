@@ -1029,7 +1029,8 @@ def check_position_b(price):
             finalize_trade_b(tp, "WIN", "TAKE PROFIT")
             return
         pos["trailing_active"] = True
-        pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        init_tsl = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
         pos["trailing_peak"] = price
         log.info(f"[B] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
         send_telegram(f"🚀 <b>[B] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
@@ -1042,19 +1043,19 @@ def check_position_b(price):
         if is_long:
             if price > peak:
                 pos["trailing_peak"] = price
-                pos["trailing_sl"] = round(price * (1 - 0.003), 2)
+                new_tsl = round(price * (1 - 0.003), 2)
+                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
                 save_state_b()
             if price <= pos["trailing_sl"]:
-                actual_pnl = (price - entry) * pos["qty"]
                 finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         else:
             if price < peak:
                 pos["trailing_peak"] = price
-                pos["trailing_sl"] = round(price * (1 + 0.003), 2)
+                new_tsl = round(price * (1 + 0.003), 2)
+                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
                 save_state_b()
             if price >= pos["trailing_sl"]:
-                actual_pnl = (entry - price) * pos["qty"]
                 finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         return
@@ -1266,7 +1267,8 @@ def check_position_c(price):
             finalize_trade_c(tp, "WIN", "TAKE PROFIT")
             return
         pos["trailing_active"] = True
-        pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        init_tsl = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
         pos["trailing_peak"] = price
         log.info(f"[C] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
         send_telegram(f"🚀 <b>[C] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
@@ -1279,7 +1281,8 @@ def check_position_c(price):
         if is_long:
             if price > peak:
                 pos["trailing_peak"] = price
-                pos["trailing_sl"] = round(price * (1 - 0.003), 2)
+                new_tsl = round(price * (1 - 0.003), 2)
+                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
                 save_state_c()
             if price <= pos["trailing_sl"]:
                 finalize_trade_c(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
@@ -1287,7 +1290,8 @@ def check_position_c(price):
         else:
             if price < peak:
                 pos["trailing_peak"] = price
-                pos["trailing_sl"] = round(price * (1 + 0.003), 2)
+                new_tsl = round(price * (1 + 0.003), 2)
+                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
                 save_state_c()
             if price >= pos["trailing_sl"]:
                 finalize_trade_c(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
