@@ -32,7 +32,7 @@ AI_SHADOW_MODE       = AI_SHADOW_MASTER
 def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                  rsi_15m, rsi_1h, box, has_divergence, trades, balance,
                  initial_balance=10000.0, candles_4h=None, extra=None,
-                 user_id=1):
+                 user_id=1, candles_15m=None):
     """
     Καλεί το AI Validator. Επιστρέφει (action, size_multiplier, result_obj).
     
@@ -80,6 +80,7 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                 "has_divergence":    has_divergence,
                 "box":               box or {},
                 "candles_4h":        candles_4h or [],
+                "candles_15m":       candles_15m or [],
                 "extra":             extra or {},
             },
             user_settings = {
@@ -1372,6 +1373,7 @@ def run_strategy_b():
             rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
             box=box, has_divergence=bear_div,
             trades=state_b.get("trades",[]), balance=balance,
+            candles_15m=candles_15m or get_candles("15m", 30),
         )
         if ai_action == "SKIP": _b_entering = False; return
         if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
@@ -1407,6 +1409,7 @@ def run_strategy_b():
             rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
             box=box, has_divergence=bull_div,
             trades=state_b.get("trades",[]), balance=balance,
+            candles_15m=candles_15m or get_candles("15m", 30),
         )
         if ai_action == "SKIP": _b_entering = False; return
         if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
