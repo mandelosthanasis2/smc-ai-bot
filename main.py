@@ -581,7 +581,7 @@ def _wh_a(sig, price=None, data=None):
         rp=RISK_PER_TRADE*2 if bd else RISK_PER_TRADE
     qty=calc_qty(state['balance'],rp,p,sl)
     hl=fetch_news(); sc,sm=ai_news_score(hl,sig,p,box)
-    oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
+    oid=place_order_paper(sig,qty,p,sl,tp) if _TRADING_MODE_C=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
         state['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'news_score':sc,'news_summary':sm,'has_divergence':bear_d}
         state['last_signal']=sig; state['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
@@ -590,7 +590,11 @@ def _wh_a(sig, price=None, data=None):
 
 def _wh_c(sig, price=None, data=None):
     global _c_entering
+    import os as _os
     from bot import rt,state_c,save_state_c,send_telegram,calc_qty,place_order_paper,place_order_live,get_candles,build_1h_box,TRADING_MODE,RISK_PER_TRADE
+    # Per-strategy trading mode — TRADING_MODE_C override αν υπάρχει
+    _TRADING_MODE_C = _os.environ.get("TRADING_MODE_C", TRADING_MODE).upper()
+    _RISK_C = float(_os.environ.get("RISK_PER_TRADE_C", str(RISK_PER_TRADE)))
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
@@ -606,7 +610,7 @@ def _wh_c(sig, price=None, data=None):
     else: tp=round(tp,2); sl=round(sl,2)
     if sig=='SHORT' and (tp>=p or sl<=p): return
     if sig=='LONG'  and (tp<=p or sl>=p): return
-    qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
+    qty=calc_qty(state_c.get('balance',10000),_RISK_C,p,sl)
     # ── AI Validator ──────────────────────────────────────────────
     _c_entering = True
     from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
@@ -616,11 +620,12 @@ def _wh_c(sig, price=None, data=None):
         rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
         box=state_c.get("box"), has_divergence=False,
         trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
+        candles_15m=__import__("bot").get_candles("15m", 30),
     )
     if _ai_act == "SKIP": _c_entering = False; return
     if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
     # ─────────────────────────────────────────────────────────────
-    oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
+    oid=place_order_paper(sig,qty,p,sl,tp) if _TRADING_MODE_C=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
         import json as _json
         state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
