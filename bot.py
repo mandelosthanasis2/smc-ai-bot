@@ -553,6 +553,7 @@ DEFAULT_STATE_B = {
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
     "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+    "trailing_enabled": True,
 }
 
 SAVED_STATE_B = {
@@ -625,6 +626,7 @@ DEFAULT_STATE_C = {
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
     "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
+    "trailing_enabled": True,
 }
 
 SAVED_STATE_C = {
@@ -1020,9 +1022,12 @@ def check_position_b(price):
             send_telegram(f"🔒 <b>[B] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state_b()
 
-    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3%
+    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3% (αν enabled)
     hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
     if hit_tp and not pos.get("trailing_active"):
+        if not state_b.get("trailing_enabled", True):
+            finalize_trade_b(tp, "WIN", "TAKE PROFIT")
+            return
         pos["trailing_active"] = True
         pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
         pos["trailing_peak"] = price
@@ -1254,9 +1259,12 @@ def check_position_c(price):
             send_telegram(f"🔒 <b>[C] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state_c()
 
-    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3%
+    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3% (αν enabled)
     hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
     if hit_tp and not pos.get("trailing_active"):
+        if not state_c.get("trailing_enabled", True):
+            finalize_trade_c(tp, "WIN", "TAKE PROFIT")
+            return
         pos["trailing_active"] = True
         pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
         pos["trailing_peak"] = price
