@@ -81,6 +81,7 @@ def _build_context(
     has_divergence: bool,
     candles_4h: list,
     extra_context: dict,
+    candles_15m: list = None,
 ) -> str:
     """Φτιάχνει το context string για το Claude prompt."""
 
@@ -96,6 +97,41 @@ def _build_context(
             trend_info = "DOWNTREND (4H MA fast < slow)"
         else:
             trend_info = "SIDEWAYS (4H MAs flat)"
+
+    # ── VOLUME ANALYSIS — confirmation από τα 15m candles ──
+    volume_info = "N/A (no volume data)"
+    cnd = candles_15m or candles_4h
+    if cnd and len(cnd) >= 20:
+        try:
+            recent_vols = [c.get("volume", 0) for c in cnd[-20:]]
+            current_vol = recent_vols[-1]
+            avg_vol     = sum(recent_vols[:-1]) / max(len(recent_vols)-1, 1)
+            ratio       = (current_vol / avg_vol) if avg_vol > 0 else 1.0
+
+            # Volume on signal candle - σχέση με μέσο
+            if ratio >= 2.0:
+                vol_strength = "EXTREMELY HIGH (>2x avg) — strong confirmation"
+            elif ratio >= 1.5:
+                vol_strength = "HIGH (1.5-2x avg) — good confirmation"
+            elif ratio >= 1.2:
+                vol_strength = "ELEVATED (1.2-1.5x avg) — mild confirmation"
+            elif ratio >= 0.8:
+                vol_strength = "NORMAL (~average)"
+            else:
+                vol_strength = "LOW (<0.8x avg) — weak signal, no commitment"
+
+            # Volume trend last 3 candles - ανοδικός;
+            last3_vols = recent_vols[-3:]
+            vol_trend = ""
+            if len(last3_vols) == 3:
+                if last3_vols[2] > last3_vols[1] > last3_vols[0]:
+                    vol_trend = " | Volume increasing (3 candles)"
+                elif last3_vols[2] < last3_vols[1] < last3_vols[0]:
+                    vol_trend = " | Volume decreasing (exhaustion?)"
+
+            volume_info = f"{vol_strength} (ratio {ratio:.2f}){vol_trend}"
+        except Exception:
+            volume_info = "Error calculating volume"
 
     # Box info
     box_info = "N/A"
@@ -147,6 +183,7 @@ RSI 15m: {rsi_15m} | RSI 1H: {rsi_1h}
 RSI interpretation: {rsi_context}
 
 4H Trend: {trend_info}
+Volume (15m): {volume_info}
 Box ({strategy} box): {box_info}
 Divergence: {'YES — increases conviction' if has_divergence else 'No'}
 {extra_lines}"""
@@ -183,10 +220,15 @@ Return ONLY this JSON (no markdown, no explanation):
 }}
 
 Scoring guide:
-  10: Perfect — RSI extreme + at key level + divergence + with trend
-  7-9: Strong — most criteria met
+  10: Perfect — RSI extreme + at key level + divergence + with trend + HIGH volume confirmation
+  7-9: Strong — most criteria met (volume should be elevated or higher)
   4-6: Moderate — some criteria met, proceed with caution
-  0-3: Weak — key criteria missing, consider skipping
+  0-3: Weak — key criteria missing OR low volume (no commitment), consider skipping
+
+Volume rules:
+  - HIGH/EXTREMELY HIGH volume on signal candle = strong confirmation (+1 to score)
+  - LOW volume on signal candle = weak signal, no commitment (-1 to score)
+  - Divergence WITHOUT volume confirmation = unreliable
 
 recommendation:
   GO:     confluence_score >= 6
@@ -239,6 +281,7 @@ def analyze_technical(
     anthropic_api_key: str,
     candles_4h: list = None,
     extra_context: dict = None,
+    candles_15m: list = None,
 ) -> TechnicalAnalysis:
     """
     Κύρια συνάρτηση Technical Agent.
@@ -259,6 +302,7 @@ def analyze_technical(
         risk_reward=risk_reward, rsi_15m=rsi_15m, rsi_1h=rsi_1h,
         box=box, has_divergence=has_divergence,
         candles_4h=candles_4h, extra_context=extra_context,
+        candles_15m=candles_15m,
     )
 
     # Claude call
