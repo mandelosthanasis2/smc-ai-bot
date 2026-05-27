@@ -18,6 +18,10 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(auth_bp)
 bot_thread.start()
 
+# Race condition guards για webhooks C/D
+_c_entering = False
+_d_entering = False
+
 # ── Start analysis agent scheduler (briefings at 08:00, 13:00, 20:00 Athens) ──
 threading.Thread(target=start_scheduler, daemon=True).start()
 
@@ -472,11 +476,12 @@ from flask import request
 import threading
 
 def _wh_d(sig, price=None, data=None):
+    global _d_entering
     from bot import rt,state_d,save_state_d,send_telegram,calc_qty,place_order_paper,place_order_live,TRADING_MODE,RISK_PER_TRADE
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
-    if p<=0 or state_d['position']: return
+    if p<=0 or state_d['position'] or _d_entering: return
     il=sig=='LONG'
     try:
         sl=float(data.get('sl',0)) or (p*.985 if il else p*1.015)
@@ -487,6 +492,7 @@ def _wh_d(sig, price=None, data=None):
     cf=data.get('confluence','normal')=='strong'
     qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
     # ── AI Validator ──────────────────────────────────────────────
+    _d_entering = True
     from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
     _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="D", side=sig,
@@ -495,7 +501,7 @@ def _wh_d(sig, price=None, data=None):
         box=None, has_divergence=cf,
         trades=state_d.get("trades",[]), balance=state_d.get("balance",10000),
     )
-    if _ai_act == "SKIP": return
+    if _ai_act == "SKIP": _d_entering = False; return
     if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
@@ -508,6 +514,7 @@ def _wh_d(sig, price=None, data=None):
         state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
+    _d_entering = False
 
 def _wh_a(sig, price=None, data=None):
     from bot import rt,state,build_daily_box,get_candles,calc_qty,place_order_paper,place_order_live
@@ -547,11 +554,12 @@ def _wh_a(sig, price=None, data=None):
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[A] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
 def _wh_c(sig, price=None, data=None):
+    global _c_entering
     from bot import rt,state_c,save_state_c,send_telegram,calc_qty,place_order_paper,place_order_live,get_candles,build_1h_box,TRADING_MODE,RISK_PER_TRADE
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
-    if p<=0 or state_c.get('position'): return
+    if p<=0 or state_c.get('position') or _c_entering: return
     tp=float(data.get('tp',0)); sl=float(data.get('sl',0))
     if not tp or not sl:
         cn=get_candles('1H',50)
@@ -565,6 +573,7 @@ def _wh_c(sig, price=None, data=None):
     if sig=='LONG'  and (tp<=p or sl>=p): return
     qty=calc_qty(state_c.get('balance',10000),RISK_PER_TRADE,p,sl)
     # ── AI Validator ──────────────────────────────────────────────
+    _c_entering = True
     from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
     _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="C", side=sig,
@@ -573,7 +582,7 @@ def _wh_c(sig, price=None, data=None):
         box=state_c.get("box"), has_divergence=False,
         trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
     )
-    if _ai_act == "SKIP": return
+    if _ai_act == "SKIP": _c_entering = False; return
     if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp)
@@ -587,6 +596,7 @@ def _wh_c(sig, price=None, data=None):
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
         from bot import _send_ai_trade_summary
         _send_ai_trade_summary("C", sig, p, sl, tp, _ai_act, _ai_res, AI_SHADOW_MASTER)
+    _c_entering = False
 
 
 def _reset_trades_db(strategy: str):
