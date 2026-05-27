@@ -223,6 +223,12 @@ TMPL = """<!DOCTYPE html>
     <span class="bx bx-gray">BTCUSDT PERP</span>
     <span class="bx bx-gray">BITGET</span>
     <span class="bx bx-gray" id="s-cycle">{{ last_cycle }}</span>
+    {% if sl in ['B','C'] %}
+    <button id="trailing-btn" onclick="toggleTrailing('{{ strategy_id }}')"
+      style="background:rgba(255,200,0,.12);color:#ffc800;border:1px solid rgba(255,200,0,.4);padding:4px 10px;border-radius:5px;font-size:9px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:1px;margin-right:4px;">
+      🚀 TRAILING
+    </button>
+    {% endif %}
     <button onclick="resetStrategy('{{ strategy_id }}')"
       style="background:rgba(255,255,255,.05);color:var(--t2);border:1px solid var(--b);padding:4px 10px;border-radius:5px;font-size:9px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:1px;">
       🔄 RESET
@@ -383,6 +389,7 @@ function upd(){
         '<td><span class="pi '+(t.result==='WIN'?'pi-wi':'pi-ls')+'">'+t.result+'</span></td></tr>'
       ).join('');
     }
+    if (typeof d.trailing_enabled !== 'undefined') updateTrailingBtn(d.trailing_enabled);
   }).catch(e=>console.log(e));
 }
 setInterval(upd,10000);upd();
@@ -396,6 +403,29 @@ function resetStrategy(strategy) {
       if(d.ok){alert('Strategy ' + strategy + ' reset OK');location.reload();}
       else{alert('Error: ' + (d.error||'unknown'));}
     }).catch(e=>alert('Error: '+e));
+}
+function toggleTrailing(strategy) {
+  fetch('/toggle-trailing/' + strategy, {method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok !== undefined) updateTrailingBtn(d.enabled);
+      else alert('Error: ' + (d.error||'unknown'));
+    }).catch(e=>alert('Error: '+e));
+}
+function updateTrailingBtn(enabled) {
+  const btn = document.getElementById('trailing-btn');
+  if (!btn) return;
+  if (enabled) {
+    btn.style.background='rgba(255,200,0,.12)';
+    btn.style.color='#ffc800';
+    btn.style.borderColor='rgba(255,200,0,.4)';
+    btn.title='Trailing ON — κλικ για OFF';
+  } else {
+    btn.style.background='rgba(255,255,255,.05)';
+    btn.style.color='var(--t3)';
+    btn.style.borderColor='var(--b)';
+    btn.title='Trailing OFF — κλικ για ON';
+  }
 }
 </script>
 </body></html>"""
@@ -620,6 +650,26 @@ def _reset_trades_db(strategy: str):
             log.info(f"Reset trades DB for strategy {strategy}")
     except Exception as e:
         log.warning(f"Reset {strategy} trades DB error: {e}")
+
+# ── TRAILING TOGGLE ─────────────────────────────────────────────
+@app.route('/toggle-trailing/<strategy>', methods=['POST'])
+def toggle_trailing(strategy):
+    from bot import state_b, save_state_b, state_c, save_state_c
+    if 'username' not in __import__('flask').session:
+        return __import__('flask').jsonify({'error':'Unauthorized'}), 401
+    s = strategy.upper()
+    try:
+        if s == 'B':
+            state_b['trailing_enabled'] = not state_b.get('trailing_enabled', True)
+            save_state_b()
+            return __import__('flask').jsonify({'ok': True, 'enabled': state_b['trailing_enabled']})
+        elif s == 'C':
+            state_c['trailing_enabled'] = not state_c.get('trailing_enabled', True)
+            save_state_c()
+            return __import__('flask').jsonify({'ok': True, 'enabled': state_c['trailing_enabled']})
+        return __import__('flask').jsonify({'error': 'Invalid strategy'}), 400
+    except Exception as e:
+        return __import__('flask').jsonify({'error': str(e)}), 500
 
 # ── RESET ENDPOINTS ─────────────────────────────────────────────
 @app.route('/reset/<strategy>', methods=['POST'])
