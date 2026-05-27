@@ -44,7 +44,7 @@ def ask_claude(system: str, user: str) -> str:
     try:
         resp = claude.messages.create(
             model=MODEL,
-            max_tokens=400,
+            max_tokens=800,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -328,6 +328,18 @@ Current bot state:\n{bot_state}"""
 
 # ── Main Briefing ─────────────────────────────────────────────────────────────
 
+
+def _smart_trunc(text: str, max_chars: int) -> str:
+    """Κόβει σε ακέραια πρόταση — δεν κόβει στη μέση λέξης/πρότασης."""
+    if len(text) <= max_chars:
+        return text
+    # Ψάχνει την τελευταία τελεία/ερωτηματικό/θαυμαστικό πριν το limit
+    for sep in ('.', '!', '?', ',', ' '):
+        idx = text.rfind(sep, 0, max_chars)
+        if idx > max_chars * 0.5:  # τουλάχιστον 50% του max
+            return text[:idx+1].strip()
+    return text[:max_chars].strip()
+
 def run_briefing(session: str):
     """Run full multi-agent analysis and send Telegram."""
     log.info(f"Starting {session} briefing...")
@@ -371,18 +383,37 @@ def run_briefing(session: str):
     emoji  = {"🌅 ΠΡΩΙ": "🌅", "☀️ ΜΕΣΗΜΕΡΙ": "☀️", "🌙 ΒΡΑΔΥ": "🌙"}.get(session, "📊")
     now_gr = datetime.now(GREECE_TZ).strftime("%d/%m %H:%M")
     NL     = chr(10)
-    msg1 = (emoji + " <b>BTC " + session + "</b> | " + now_gr
-            + NL + "<b>$" + "{:,.0f}".format(price) + "</b> " + change_24h
-            + " | Dom: " + dominance + " | OI: " + open_interest
-            + NL + "L/S: " + ls_ratio
-            + NL + NL + "📊 " + technical[:350]
-            + NL + NL + "📰 F&G: " + fear_greed + " — " + sentiment[:250]
-            + NL + NL + "⛓️ Funding: " + funding + " — " + onchain[:200])
-    msg2 = ("🐂 " + bull[:200]
-            + NL + NL + "🐻 " + bear[:200]
-            + NL + NL + "✅ " + verdict[:600])
-    send_telegram(msg1)
-    send_telegram(msg2)
+    header = (emoji + " <b>BTC " + session + "</b> | " + now_gr
+              + NL + "<b>$" + "{:,.0f}".format(price) + "</b> " + change_24h
+              + " | Dom: " + dominance + " | OI: " + open_interest
+              + NL + "L/S: " + ls_ratio)
+
+    # Κάθε section — κόβει σε ακέραια πρόταση
+    sec_tech      = "📊 " + _smart_trunc(technical, 500)
+    sec_sentiment = "📰 F&G: " + fear_greed + " — " + _smart_trunc(sentiment, 400)
+    sec_onchain   = "⛓️ Funding: " + funding + " — " + _smart_trunc(onchain, 350)
+    sec_bull      = "🐂 " + _smart_trunc(bull, 350)
+    sec_bear      = "🐻 " + _smart_trunc(bear, 350)
+    sec_verdict   = "✅ " + _smart_trunc(verdict, 800)
+
+    msg1 = (header + NL + NL + sec_tech
+            + NL + NL + sec_sentiment
+            + NL + NL + sec_onchain)
+    msg2 = (sec_bull + NL + NL + sec_bear + NL + NL + sec_verdict)
+
+    # Safety: αν κάποιο message > 4000 chars, σπάσε σε επιπλέον μήνυμα
+    def _tg_safe_send(text):
+        if len(text) <= 4000:
+            send_telegram(text)
+        else:
+            # Χώρισε στη μέση σε κενή γραμμή
+            mid = text.rfind(NL + NL, 0, 4000)
+            if mid == -1:
+                mid = 4000
+            send_telegram(text[:mid])
+            send_telegram(text[mid:].strip())
+    _tg_safe_send(msg1)
+    _tg_safe_send(msg2)
     log.infolog.info(f"{session} briefing sent!")
 
 
