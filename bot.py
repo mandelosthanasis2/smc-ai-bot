@@ -1011,7 +1011,7 @@ def check_position_b(price):
     is_long = pos["type"] == "LONG"
     tp_dist = abs(tp-entry)
 
-    # Phase 1: 50% - Break Even
+    # Phase 1: 50% → Break Even
     if tp_dist>0 and not pos.get("phase1_done"):
         progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
         if progress >= 0.50:
@@ -1020,11 +1020,42 @@ def check_position_b(price):
             send_telegram(f"🔒 <b>[B] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state_b()
 
+    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3%
     hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
-    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
+    if hit_tp and not pos.get("trailing_active"):
+        pos["trailing_active"] = True
+        pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        pos["trailing_peak"] = price
+        log.info(f"[B] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
+        send_telegram(f"🚀 <b>[B] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
+        save_state_b()
+        return
 
-    if hit_tp: finalize_trade_b(tp, "WIN", "TAKE PROFIT")
-    elif hit_sl:
+    # Phase 2 active: ενημέρωση trailing SL
+    if pos.get("trailing_active"):
+        peak = pos.get("trailing_peak", price)
+        if is_long:
+            if price > peak:
+                pos["trailing_peak"] = price
+                pos["trailing_sl"] = round(price * (1 - 0.003), 2)
+                save_state_b()
+            if price <= pos["trailing_sl"]:
+                actual_pnl = (price - entry) * pos["qty"]
+                finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
+        else:
+            if price < peak:
+                pos["trailing_peak"] = price
+                pos["trailing_sl"] = round(price * (1 + 0.003), 2)
+                save_state_b()
+            if price >= pos["trailing_sl"]:
+                actual_pnl = (entry - price) * pos["qty"]
+                finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
+        return
+
+    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
+    if hit_sl:
         actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
         if abs(actual_pnl) < 1.0:
             result = "BREAK EVEN"; note = "BREAK EVEN"
@@ -1214,7 +1245,7 @@ def check_position_c(price):
     is_long = pos["type"] == "LONG"
     tp_dist = abs(tp-entry)
 
-    # Phase 1: 50% - Break Even
+    # Phase 1: 50% → Break Even
     if tp_dist>0 and not pos.get("phase1_done"):
         progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
         if progress >= 0.50:
@@ -1223,11 +1254,40 @@ def check_position_c(price):
             send_telegram(f"🔒 <b>[C] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state_c()
 
+    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3%
     hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
-    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
+    if hit_tp and not pos.get("trailing_active"):
+        pos["trailing_active"] = True
+        pos["trailing_sl"] = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+        pos["trailing_peak"] = price
+        log.info(f"[C] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
+        send_telegram(f"🚀 <b>[C] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
+        save_state_c()
+        return
 
-    if hit_tp: finalize_trade_c(tp, "WIN", "TAKE PROFIT")
-    elif hit_sl:
+    # Phase 2 active: ενημέρωση trailing SL
+    if pos.get("trailing_active"):
+        peak = pos.get("trailing_peak", price)
+        if is_long:
+            if price > peak:
+                pos["trailing_peak"] = price
+                pos["trailing_sl"] = round(price * (1 - 0.003), 2)
+                save_state_c()
+            if price <= pos["trailing_sl"]:
+                finalize_trade_c(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
+        else:
+            if price < peak:
+                pos["trailing_peak"] = price
+                pos["trailing_sl"] = round(price * (1 + 0.003), 2)
+                save_state_c()
+            if price >= pos["trailing_sl"]:
+                finalize_trade_c(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
+        return
+
+    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
+    if hit_sl:
         actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
         if abs(actual_pnl) < 1.0:
             result = "BREAK EVEN"; note = "BREAK EVEN"
