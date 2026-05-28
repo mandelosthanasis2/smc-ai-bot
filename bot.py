@@ -81,6 +81,9 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                 "box":               box or {},
                 "candles_4h":        candles_4h or [],
                 "candles_15m":       candles_15m or [],
+                "candles_1h":        get_candles("1H",  50) or [],
+                "candles_5m":        get_candles("5m",  50) or [],
+                "candles_1d":        get_candles("1D",  30) or [],
                 "extra":             extra or {},
             },
             user_settings = {
@@ -197,7 +200,7 @@ def bitget_signed(method, path, body=None):
         return {}
 
 def get_candles(granularity, limit=500):
-    gran_map = {"1H": "1H", "4H": "4H", "1D": "4H", "15m": "15m"}
+    gran_map = {"1H": "1H", "4H": "4H", "1D": "1D", "15m": "15m", "5m": "5m"}
     gran     = gran_map.get(granularity, "1H")
     r        = bitget_get("/api/v2/mix/market/candles", {
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
