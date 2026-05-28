@@ -18,9 +18,13 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(auth_bp)
 bot_thread.start()
 
-# Race condition guards για webhooks C/D
-_c_entering = False
-_d_entering = False
+# Race condition guards — αποθηκεύουν timestamp τελευταίου signal
+# Αν το ίδιο signal φτάσει μέσα σε 30s, αγνοείται
+import time as _time
+_c_last_signal_time = 0.0
+_d_last_signal_time = 0.0
+_C_DEDUP_SECONDS = 30
+_D_DEDUP_SECONDS = 30
 
 # ── Start analysis agent scheduler (briefings at 08:00, 13:00, 20:00 Athens) ──
 threading.Thread(target=start_scheduler, daemon=True).start()
@@ -485,12 +489,13 @@ def api():
     from bot import rt
     data = dict(state)
     # Προσθήκη live price/RSI για το analysis_agent.py
-    data["price"]    = rt.price if rt.price > 0 else state.get("current_price", 0)
-    data["rsi_1h"]   = round(rt.rsi_1h, 2) if hasattr(rt, "rsi_1h") else state.get("current_rsi", 0)
+    _state = state or {}
+    data["price"]    = rt.price if rt.price > 0 else _state.get("current_price", 0)
+    data["rsi_1h"]   = round(rt.rsi_1h, 2) if hasattr(rt, "rsi_1h") else _state.get("current_rsi", 0)
     data["rsi_15m"]  = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
-    data["box_high"] = state.get("box", {}).get("high", 0)
-    data["box_low"]  = state.get("box", {}).get("low", 0)
-    data["mid"]      = state.get("box", {}).get("mid", 0)
+    data["box_high"] = (_state.get("box") or {}).get("high", 0)
+    data["box_low"]  = (_state.get("box") or {}).get("low", 0)
+    data["mid"]      = (_state.get("box") or {}).get("mid", 0)
     return jsonify(data)
 
 @app.route('/api/b')
@@ -511,12 +516,17 @@ from flask import request
 import threading
 
 def _wh_d(sig, price=None, data=None):
-    global _d_entering
+    global _d_last_signal_time
     from bot import rt,state_d,save_state_d,send_telegram,calc_qty,place_order_paper,place_order_live,TRADING_MODE,RISK_PER_TRADE
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
-    if p<=0 or state_d['position'] or _d_entering: return
+    now = _time.time()
+    if p<=0 or state_d['position']: return
+    if now - _d_last_signal_time < _D_DEDUP_SECONDS:
+        log.info(f"[D] Duplicate signal ignored (last={now-_d_last_signal_time:.1f}s ago)")
+        return
+    _d_last_signal_time = now
     il=sig=='LONG'
     try:
         sl=float(data.get('sl',0)) or (p*.985 if il else p*1.015)
@@ -527,7 +537,6 @@ def _wh_d(sig, price=None, data=None):
     cf=data.get('confluence','normal')=='strong'
     qty=calc_qty(state_d['balance'],RISK_PER_TRADE*(2 if cf else 1),p,sl)
     # ── AI Validator ──────────────────────────────────────────────
-    _d_entering = True
     from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
     _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="D", side=sig,
@@ -536,7 +545,7 @@ def _wh_d(sig, price=None, data=None):
         box=None, has_divergence=cf,
         trades=state_d.get("trades",[]), balance=state_d.get("balance",10000),
     )
-    if _ai_act == "SKIP": _d_entering = False; return
+    if _ai_act == "SKIP": return
     if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
@@ -549,7 +558,6 @@ def _wh_d(sig, price=None, data=None):
         state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
-    _d_entering = False
 
 def _wh_a(sig, price=None, data=None):
     from bot import rt,state,build_daily_box,get_candles,calc_qty,place_order_paper,place_order_live
@@ -589,7 +597,7 @@ def _wh_a(sig, price=None, data=None):
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[A] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
 def _wh_c(sig, price=None, data=None):
-    global _c_entering
+    global _c_last_signal_time
     import os as _os
     from bot import rt,state_c,save_state_c,send_telegram,calc_qty,place_order_paper,place_order_live,get_candles,build_1h_box,TRADING_MODE,RISK_PER_TRADE
     # Per-strategy trading mode — TRADING_MODE_C override αν υπάρχει
@@ -598,7 +606,12 @@ def _wh_c(sig, price=None, data=None):
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
-    if p<=0 or state_c.get('position') or _c_entering: return
+    now = _time.time()
+    if p<=0 or state_c.get('position'): return
+    if now - _c_last_signal_time < _C_DEDUP_SECONDS:
+        log.info(f"[C] Duplicate signal ignored (last={now-_c_last_signal_time:.1f}s ago)")
+        return
+    _c_last_signal_time = now
     tp=float(data.get('tp',0)); sl=float(data.get('sl',0))
     if not tp or not sl:
         cn=get_candles('1H',50)
@@ -612,7 +625,6 @@ def _wh_c(sig, price=None, data=None):
     if sig=='LONG'  and (tp<=p or sl>=p): return
     qty=calc_qty(state_c.get('balance',10000),_RISK_C,p,sl)
     # ── AI Validator ──────────────────────────────────────────────
-    _c_entering = True
     from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
     _ai_act,_ai_mult,_ai_res = _ai_validate(
         strategy="C", side=sig,
@@ -622,7 +634,7 @@ def _wh_c(sig, price=None, data=None):
         trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
         candles_15m=__import__("bot").get_candles("15m", 30),
     )
-    if _ai_act == "SKIP": _c_entering = False; return
+    if _ai_act == "SKIP": return
     if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
     # ─────────────────────────────────────────────────────────────
     oid=place_order_paper(sig,qty,p,sl,tp) if _TRADING_MODE_C=='PAPER' else place_order_live(sig,qty,sl,tp)
@@ -636,7 +648,6 @@ def _wh_c(sig, price=None, data=None):
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
         from bot import _send_ai_trade_summary
         _send_ai_trade_summary("C", sig, p, sl, tp, _ai_act, _ai_res, AI_SHADOW_MASTER)
-    _c_entering = False
 
 
 def _reset_trades_db(strategy: str):
