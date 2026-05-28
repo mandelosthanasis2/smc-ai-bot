@@ -17,123 +17,209 @@ COACH_HTML = """
 <html lang="el">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Trading Coach — NRM Bot</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#0d0f14; color:#e2e8f0; font-family:'DM Mono',monospace; height:100vh; display:flex; }
 
-  /* Sidebar */
-  .sb { width:220px; background:#111318; border-right:1px solid rgba(255,255,255,.07);
-        display:flex; flex-direction:column; padding:20px 0; flex-shrink:0; }
-  .sb-logo { padding:0 20px 20px; font-size:13px; font-weight:700; color:#a78bfa;
-             border-bottom:1px solid rgba(255,255,255,.07); margin-bottom:12px; }
-  .sb-a { display:flex; align-items:center; gap:10px; padding:10px 20px;
-          font-size:11px; color:#94a3b8; text-decoration:none; transition:.15s; }
-  .sb-a:hover, .sb-a.on { background:rgba(167,139,250,.08); color:#a78bfa; }
-  .sb-a span:first-child { font-size:16px; }
-  .sb-section { font-size:9px; color:#475569; padding:16px 20px 6px; letter-spacing:1px; }
+  body {
+    background:#0d0f14;
+    color:#e2e8f0;
+    font-family:-apple-system,BlinkMacSystemFont,'DM Mono',monospace;
+    height:100dvh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
 
-  /* Main */
-  .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-  .header { padding:16px 24px; border-bottom:1px solid rgba(255,255,255,.07);
-            display:flex; align-items:center; justify-content:space-between; }
-  .header h1 { font-size:14px; font-weight:600; color:#e2e8f0; }
-  .header small { font-size:10px; color:#64748b; }
-  .reset-btn { font-size:10px; background:rgba(255,255,255,.05); color:#94a3b8;
-               border:1px solid rgba(255,255,255,.1); padding:4px 12px;
-               border-radius:5px; cursor:pointer; font-family:inherit; }
-  .reset-btn:hover { background:rgba(255,255,255,.1); }
+  /* ── Header ── */
+  .hd {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 16px;
+    background:#111318;
+    border-bottom:1px solid rgba(255,255,255,.07);
+    flex-shrink:0;
+  }
+  .hd-left { display:flex; align-items:center; gap:10px; }
+  .hd-icon { font-size:22px; }
+  .hd-title { font-size:14px; font-weight:700; color:#e2e8f0; }
+  .hd-sub { font-size:10px; color:#64748b; margin-top:1px; }
+  .reset-btn {
+    font-size:11px; background:rgba(255,255,255,.06); color:#94a3b8;
+    border:1px solid rgba(255,255,255,.1); padding:6px 12px;
+    border-radius:20px; cursor:pointer; font-family:inherit;
+    -webkit-tap-highlight-color:transparent;
+  }
 
-  /* Chat area */
-  .chat-wrap { flex:1; overflow-y:auto; padding:20px 24px; display:flex; flex-direction:column; gap:16px; }
+  /* ── Chat area ── */
+  .chat-wrap {
+    flex:1; overflow-y:auto; overflow-x:hidden;
+    padding:16px; display:flex; flex-direction:column; gap:12px;
+    -webkit-overflow-scrolling:touch;
+  }
 
-  /* Messages */
-  .msg { max-width:80%; line-height:1.6; font-size:12px; }
-  .msg.user { align-self:flex-end; background:#4f46e5; color:#fff;
-              padding:10px 14px; border-radius:12px 12px 2px 12px; }
-  .msg.bot  { align-self:flex-start; background:#1e2330; color:#e2e8f0;
-              padding:10px 14px; border-radius:2px 12px 12px 12px;
-              border:1px solid rgba(255,255,255,.06); white-space:pre-wrap; }
-  .msg.bot.loading { color:#64748b; font-style:italic; }
+  /* ── Messages ── */
+  .msg {
+    max-width:88%; line-height:1.65; font-size:13px;
+    word-break:break-word;
+    animation:fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
 
-  /* Suggestions */
-  .suggestions { padding:12px 24px; display:flex; flex-wrap:wrap; gap:8px;
-                 border-top:1px solid rgba(255,255,255,.05); }
-  .sug-btn { font-size:10px; background:rgba(167,139,250,.08); color:#a78bfa;
-             border:1px solid rgba(167,139,250,.2); padding:5px 12px;
-             border-radius:20px; cursor:pointer; font-family:inherit; transition:.15s; }
-  .sug-btn:hover { background:rgba(167,139,250,.15); }
+  .msg.user {
+    align-self:flex-end;
+    background:linear-gradient(135deg,#4f46e5,#6d28d9);
+    color:#fff;
+    padding:10px 14px;
+    border-radius:18px 18px 4px 18px;
+    box-shadow:0 2px 8px rgba(79,70,229,.3);
+  }
+  .msg.bot {
+    align-self:flex-start;
+    background:#1a1f2e;
+    color:#e2e8f0;
+    padding:12px 14px;
+    border-radius:4px 18px 18px 18px;
+    border:1px solid rgba(255,255,255,.07);
+    white-space:pre-wrap;
+  }
+  .msg.loading {
+    color:#64748b; font-style:italic; background:transparent;
+    border:none; padding:4px 0;
+  }
 
-  /* Input */
-  .input-wrap { padding:16px 24px; border-top:1px solid rgba(255,255,255,.07);
-                display:flex; gap:10px; }
-  .chat-input { flex:1; background:#1e2330; border:1px solid rgba(255,255,255,.1);
-                color:#e2e8f0; padding:10px 14px; border-radius:8px;
-                font-family:'DM Mono',monospace; font-size:12px; outline:none; }
-  .chat-input:focus { border-color:rgba(167,139,250,.4); }
-  .send-btn { background:#4f46e5; color:#fff; border:none; padding:10px 18px;
-              border-radius:8px; cursor:pointer; font-family:inherit;
-              font-size:12px; transition:.15s; }
-  .send-btn:hover { background:#4338ca; }
-  .send-btn:disabled { opacity:.5; cursor:not-allowed; }
+  /* ── Suggestions ── */
+  .sug-wrap {
+    flex-shrink:0;
+    padding:10px 16px;
+    display:flex; gap:8px; overflow-x:auto;
+    border-top:1px solid rgba(255,255,255,.05);
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .sug-wrap::-webkit-scrollbar { display:none; }
+  .sug-btn {
+    flex-shrink:0;
+    font-size:11px; background:rgba(167,139,250,.1); color:#a78bfa;
+    border:1px solid rgba(167,139,250,.25); padding:7px 14px;
+    border-radius:20px; cursor:pointer; font-family:inherit;
+    white-space:nowrap;
+    -webkit-tap-highlight-color:transparent;
+    transition:background .15s;
+  }
+  .sug-btn:active { background:rgba(167,139,250,.25); }
+
+  /* ── Input bar ── */
+  .input-wrap {
+    flex-shrink:0;
+    display:flex; align-items:center; gap:8px;
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom));
+    background:#111318;
+    border-top:1px solid rgba(255,255,255,.07);
+  }
+  .chat-input {
+    flex:1;
+    background:#1e2330; border:1px solid rgba(255,255,255,.1);
+    color:#e2e8f0; padding:11px 14px;
+    border-radius:22px; outline:none;
+    font-family:inherit; font-size:14px;
+    -webkit-appearance:none;
+    transition:border-color .15s;
+  }
+  .chat-input:focus { border-color:rgba(167,139,250,.5); }
+  .send-btn {
+    flex-shrink:0;
+    width:42px; height:42px;
+    background:linear-gradient(135deg,#4f46e5,#6d28d9);
+    color:#fff; border:none; border-radius:50%;
+    cursor:pointer; font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+    -webkit-tap-highlight-color:transparent;
+    transition:transform .1s;
+  }
+  .send-btn:active { transform:scale(.92); }
+  .send-btn:disabled { opacity:.4; }
+
+  /* ── Desktop sidebar ── */
+  @media(min-width:768px) {
+    body { flex-direction:row; }
+    .sidebar {
+      width:200px; background:#111318;
+      border-right:1px solid rgba(255,255,255,.07);
+      display:flex; flex-direction:column; padding:20px 0; flex-shrink:0;
+    }
+    .sb-logo { padding:0 16px 16px; font-size:12px; font-weight:700;
+               color:#a78bfa; border-bottom:1px solid rgba(255,255,255,.07); margin-bottom:10px; }
+    .sb-a { display:flex; align-items:center; gap:8px; padding:9px 16px;
+            font-size:11px; color:#94a3b8; text-decoration:none; }
+    .sb-a:hover, .sb-a.on { background:rgba(167,139,250,.08); color:#a78bfa; }
+    .main-area { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  }
+  @media(max-width:767px) {
+    .sidebar { display:none; }
+    .main-area { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  }
 </style>
 </head>
 <body>
 
-<nav class="sb">
+<!-- Desktop sidebar -->
+<nav class="sidebar">
   <div class="sb-logo">📊 NRM Bot</div>
-  <div class="sb-section">STRATEGIES</div>
-  <a href="/b"  class="sb-a"><span>🟣</span><span>Strategy B</span></a>
-  <a href="/c"  class="sb-a"><span>🟠</span><span>Strategy C</span></a>
-  <a href="/d"  class="sb-a"><span>🟢</span><span>Strategy D</span></a>
-  <div class="sb-section">ANALYTICS</div>
-  <a href="/analytics" class="sb-a"><span>📈</span><span>Analytics</span></a>
-  <a href="/coach"     class="sb-a on"><span>📚</span><span>Coach</span></a>
-  <div class="sb-section">ACCOUNT</div>
-  <a href="/settings" class="sb-a"><span>⚙️</span><span>Settings</span></a>
+  <a href="/b"        class="sb-a"><span>🟣</span> Strategy B</a>
+  <a href="/c"        class="sb-a"><span>🟠</span> Strategy C</a>
+  <a href="/d"        class="sb-a"><span>🟢</span> Strategy D</a>
+  <a href="/analytics"class="sb-a"><span>📈</span> Analytics</a>
+  <a href="/coach"    class="sb-a on"><span>📚</span> Coach</a>
+  <a href="/settings" class="sb-a"><span>⚙️</span> Settings</a>
 </nav>
 
-<div class="main">
-  <div class="header">
-    <div>
-      <h1>📚 Trading Coach</h1>
-      <small>Powered by your trading books (905 chunks)</small>
+<div class="main-area">
+  <!-- Header -->
+  <div class="hd">
+    <div class="hd-left">
+      <span class="hd-icon">📚</span>
+      <div>
+        <div class="hd-title">Trading Coach</div>
+        <div class="hd-sub">905 chunks · based on your books</div>
+      </div>
     </div>
-    <button class="reset-btn" onclick="resetChat()">🔄 New Chat</button>
+    <button class="reset-btn" onclick="resetChat()">↺ New</button>
   </div>
 
+  <!-- Chat -->
   <div class="chat-wrap" id="chat">
-    <div class="msg bot">
-      Γεια! Είμαι ο Trading Coach σου, εκπαιδευμένος αποκλειστικά στα βιβλία σου.
+    <div class="msg bot">Γεια! Είμαι ο Trading Coach σου, εκπαιδευμένος αποκλειστικά στα βιβλία σου.
 
 Μπορώ να σε βοηθήσω με:
 • Order Blocks, FVG, SMC concepts
-• Supply & Demand zones
+• Supply &amp; Demand zones
 • Market Structure (BOS, CHoCH)
 • Risk Management
 • Swing Trading setups
-• Volume Profile & Order Flow
+• Volume Profile &amp; Order Flow
 
-Τι θέλεις να μάθεις σήμερα;
-    </div>
+Τι θέλεις να μάθεις σήμερα;</div>
   </div>
 
-  <div class="suggestions" id="suggestions">
+  <!-- Suggestions (horizontal scroll) -->
+  <div class="sug-wrap" id="suggestions">
     {{ suggestions | safe }}
   </div>
 
+  <!-- Input -->
   <div class="input-wrap">
     <input class="chat-input" id="inp" type="text"
-           placeholder="Ρώτα οτιδήποτε για trading..."
-           onkeydown="if(event.key==='Enter')sendMsg()">
-    <button class="send-btn" id="send-btn" onclick="sendMsg()">Αποστολή</button>
+           placeholder="Ρώτα για trading..."
+           autocomplete="off" autocorrect="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}">
+    <button class="send-btn" id="send-btn" onclick="sendMsg()" aria-label="Send">➤</button>
   </div>
 </div>
 
 <script>
-const chat   = document.getElementById('chat');
-const inp    = document.getElementById('inp');
+const chat    = document.getElementById('chat');
+const inp     = document.getElementById('inp');
 const sendBtn = document.getElementById('send-btn');
 
 function addMsg(text, type) {
@@ -150,30 +236,27 @@ async function sendMsg() {
   if (!msg) return;
   inp.value = '';
   sendBtn.disabled = true;
+  inp.blur();
 
   addMsg(msg, 'user');
-  const loading = addMsg('Σκέφτομαι...', 'bot loading');
+  const loading = addMsg('⏳ Σκέφτομαι...', 'msg loading');
 
   try {
     const r = await fetch('/api/coach', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({message: msg})
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg})
     });
     const d = await r.json();
     loading.remove();
-    if (d.answer) {
-      addMsg(d.answer, 'bot');
-    } else {
-      addMsg('Σφάλμα: ' + (d.error || 'άγνωστο'), 'bot loading');
-    }
+    addMsg(d.answer || ('Σφάλμα: ' + (d.error||'άγνωστο')), d.answer ? 'bot' : 'msg loading');
   } catch(e) {
     loading.remove();
-    addMsg('Σφάλμα σύνδεσης.', 'bot loading');
+    addMsg('Σφάλμα σύνδεσης. Δοκίμασε ξανά.', 'msg loading');
   }
 
   sendBtn.disabled = false;
-  inp.focus();
+  chat.scrollTop = chat.scrollHeight;
 }
 
 function sendSuggestion(btn) {
@@ -183,15 +266,17 @@ function sendSuggestion(btn) {
 
 async function resetChat() {
   await fetch('/api/coach/reset', {method:'POST'});
-  chat.innerHTML = '';
-  addMsg('Νέα συνομιλία ξεκίνησε! Τι θέλεις να μάθεις;', 'bot');
+  const msgs = chat.querySelectorAll('.msg.user, .msg.bot:not(:first-child)');
+  msgs.forEach(el => el.remove());
 }
 
-inp.focus();
+// Auto-focus on desktop only
+if (window.innerWidth >= 768) inp.focus();
 </script>
 </body>
 </html>
 """
+
 
 
 app = Flask(__name__)
