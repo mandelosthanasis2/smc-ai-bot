@@ -225,6 +225,33 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
     ai_avg_pnl    = round(sum(ai_trade_pnls)    / len(ai_trade_pnls),    2) if ai_trade_pnls    else 0
     no_ai_avg_pnl = round(sum(no_ai_trade_pnls) / len(no_ai_trade_pnls), 2) if no_ai_trade_pnls else 0
 
+    # Shadow decision table — ανά trade
+    shadow_decisions = []
+    for t in ai_trades:
+        action = t.get("ai_action", "")
+        pnl    = float(t.get("pnl") or 0)
+        result = t.get("result", "")
+        correct = (
+            (action == "SKIP"        and result == "LOSS") or
+            (action == "GO"          and result == "WIN")  or
+            (action == "DOUBLE_SIZE" and result == "WIN")  or
+            (action == "REDUCE_SIZE" and result != "LOSS")
+        )
+        shadow_decisions.append({
+            "time":    str(t.get("time") or "")[:16],
+            "type":    t.get("type", ""),
+            "action":  action,
+            "result":  result,
+            "pnl":     round(pnl, 2),
+            "conf":    round(float(t.get("ai_confidence") or 0) * 100),
+            "correct": correct,
+        })
+
+    # Simulated PnL: τι θα γινόταν αν ο validator ήταν active (SKIP = δεν εκτελείται)
+    sim_pnl  = round(sum(float(t.get("pnl") or 0) for t in ai_trades if t.get("ai_action") != "SKIP"), 2)
+    real_pnl_ai = round(sum(float(t.get("pnl") or 0) for t in ai_trades), 2)
+    sim_diff = round(sim_pnl - real_pnl_ai, 2)  # θετικό = ο validator θα βελτίωνε
+
     ai_stats = {
         "total_ai_trades":  len(ai_trades),
         "skips":            len(ai_skips),
@@ -237,6 +264,8 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
         "saved_pnl":        saved_pnl,
         "shadow_trades":    len([t for t in ai_trades if t.get("ai_shadow_mode")]),
         "active_trades":    len([t for t in ai_trades if not t.get("ai_shadow_mode")]),
+        "shadow_decisions": shadow_decisions,
+        "sim_diff":         sim_diff,
         "ai_win_rate":      ai_wr,
         "no_ai_win_rate":   no_ai_wr,
         "ai_avg_pnl":       ai_avg_pnl,
@@ -645,6 +674,71 @@ function renderStrategy(s, d) {
             ${statCard('REDUCE', ai.reduces||0, 'var(--yellow)')}
           </div>
           ${rec}
+
+          <!-- Shadow Decision Table -->
+          ${(() => {
+            const decisions = ai.shadow_decisions || [];
+            if (!decisions.length) return '';
+            const correct = decisions.filter(d => d.correct).length;
+            const accuracy = Math.round(correct / decisions.length * 100);
+            const simDiff = ai.sim_diff || 0;
+            const simColor = simDiff >= 0 ? 'var(--green)' : 'var(--red)';
+            const simSign  = simDiff >= 0 ? '+' : '';
+
+            const rows = decisions.map(d => {
+              const actionColors = {GO:'#10b981',SKIP:'#ef4444',REDUCE_SIZE:'#f59e0b',DOUBLE_SIZE:'#3b82f6'};
+              const actionIcons  = {GO:'✅',SKIP:'🚫',REDUCE_SIZE:'📉',DOUBLE_SIZE:'🚀'};
+              const resultColor  = d.result === 'WIN' ? '#10b981' : d.result === 'LOSS' ? '#ef4444' : '#f59e0b';
+              const pnlColor     = d.pnl >= 0 ? '#10b981' : '#ef4444';
+              const correctIcon  = d.correct ? '✅' : '❌';
+              const rowBg        = d.action === 'SKIP' && d.result === 'WIN'
+                ? 'rgba(239,68,68,0.08)'   // SKIP αλλά ήταν WIN — ο validator λάθεψε
+                : d.action === 'SKIP' && d.result === 'LOSS'
+                ? 'rgba(74,222,128,0.06)'  // SKIP και ήταν LOSS — ο validator σωστός
+                : '';
+              return `<tr style="background:${rowBg};border-bottom:1px solid rgba(255,255,255,0.04)">
+                <td style="padding:5px 8px;font-size:10px;color:var(--text3)">${d.time.slice(5)}</td>
+                <td style="padding:5px 8px;font-size:10px;color:${d.type==='LONG'?'#10b981':'#ef4444'}">${d.type}</td>
+                <td style="padding:5px 8px">
+                  <span style="font-size:10px;color:${actionColors[d.action]||'#fff'};font-weight:600">
+                    ${actionIcons[d.action]||''} ${d.action==='REDUCE_SIZE'?'½x':d.action==='DOUBLE_SIZE'?'2x':d.action}
+                  </span>
+                  <span style="font-size:9px;color:var(--text3);margin-left:4px">${d.conf}%</span>
+                </td>
+                <td style="padding:5px 8px;font-size:10px;color:${resultColor}">${d.result}</td>
+                <td style="padding:5px 8px;font-size:10px;color:${pnlColor};text-align:right">${d.pnl>=0?'+':''}$${Math.abs(d.pnl).toFixed(0)}</td>
+                <td style="padding:5px 8px;text-align:center">${correctIcon}</td>
+              </tr>`;
+            }).join('');
+
+            return `
+            <div style="margin-top:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-size:11px;font-weight:600;color:var(--text2);letter-spacing:0.5px">
+                  📋 SHADOW DECISIONS — ${decisions.length} trades · ${accuracy}% correct
+                </div>
+                <div style="font-size:11px;font-weight:600;color:${simColor}">
+                  Simulated impact: ${simSign}$${Math.abs(simDiff).toFixed(2)}
+                  <span style="font-size:9px;color:var(--text3);font-weight:400;margin-left:4px">(αν ήταν active)</span>
+                </div>
+              </div>
+              <div style="overflow-x:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
+                <table style="width:100%;border-collapse:collapse">
+                  <thead>
+                    <tr style="background:rgba(255,255,255,0.03)">
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">TIME</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">TYPE</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">AI DECISION</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">RESULT</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:right;font-weight:600;letter-spacing:0.5px">P&L</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:center;font-weight:600;letter-spacing:0.5px">✓</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>`;
+          })()}
 
           ${(() => {
             const noAiCount = ai.no_ai_trade_count || 0;
