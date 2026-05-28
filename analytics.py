@@ -237,14 +237,35 @@ def calc_stats(trades: list, initial_balance: float = 10000.0) -> dict:
             (action == "DOUBLE_SIZE" and result == "WIN")  or
             (action == "REDUCE_SIZE" and result != "LOSS")
         )
+        # Simulated PnL για κάθε απόφαση:
+        # SKIP → τι χάθηκε/κερδίστηκε που θα αποφεύγαμε
+        # DOUBLE → πραγματικό PnL * 2x
+        # REDUCE → πραγματικό PnL * 0.5x
+        # GO → ίδιο με το πραγματικό
+        if action == "SKIP":
+            sim_pnl_trade = 0.0           # δεν εκτελείται
+            sim_label = "—"               # δεν μπαίνει θέση
+        elif action == "DOUBLE_SIZE":
+            sim_pnl_trade = round(pnl * 2, 2)
+            sim_label = f"{'+'if pnl*2>=0 else ''}${pnl*2:.0f}"
+        elif action == "REDUCE_SIZE":
+            sim_pnl_trade = round(pnl * 0.5, 2)
+            sim_label = f"{'+'if pnl*0.5>=0 else ''}${pnl*0.5:.0f}"
+        else:  # GO
+            sim_pnl_trade = round(pnl, 2)
+            sim_label = f"{'+'if pnl>=0 else ''}${pnl:.0f}"
+
         shadow_decisions.append({
-            "time":    str(t.get("time") or "")[:16],
-            "type":    t.get("type", ""),
-            "action":  action,
-            "result":  result,
-            "pnl":     round(pnl, 2),
-            "conf":    round(float(t.get("ai_confidence") or 0) * 100),
-            "correct": correct,
+            "time":          str(t.get("time") or "")[:16],
+            "type":          t.get("type", ""),
+            "action":        action,
+            "result":        result,
+            "pnl":           round(pnl, 2),           # πραγματικό PnL
+            "sim_pnl":       sim_pnl_trade,            # PnL αν εφαρμοζόταν η AI απόφαση
+            "sim_label":     sim_label,
+            "conf":          round(float(t.get("ai_confidence") or 0) * 100),
+            "correct":       correct,
+            "note":          str(t.get("note") or ""),
         })
 
     # Simulated PnL: τι θα γινόταν αν ο validator ήταν active (SKIP = δεν εκτελείται)
@@ -688,56 +709,73 @@ function renderStrategy(s, d) {
             const rows = decisions.map(d => {
               const actionColors = {GO:'#10b981',SKIP:'#ef4444',REDUCE_SIZE:'#f59e0b',DOUBLE_SIZE:'#3b82f6'};
               const actionIcons  = {GO:'✅',SKIP:'🚫',REDUCE_SIZE:'📉',DOUBLE_SIZE:'🚀'};
-              const resultColor  = d.result === 'WIN' ? '#10b981' : d.result === 'LOSS' ? '#ef4444' : '#f59e0b';
-              const pnlColor     = d.pnl >= 0 ? '#10b981' : '#ef4444';
-              const correctIcon  = d.correct ? '✅' : '❌';
-              const rowBg        = d.action === 'SKIP' && d.result === 'WIN'
-                ? 'rgba(239,68,68,0.08)'   // SKIP αλλά ήταν WIN — ο validator λάθεψε
-                : d.action === 'SKIP' && d.result === 'LOSS'
-                ? 'rgba(74,222,128,0.06)'  // SKIP και ήταν LOSS — ο validator σωστός
-                : '';
-              return `<tr style="background:${rowBg};border-bottom:1px solid rgba(255,255,255,0.04)">
-                <td style="padding:5px 8px;font-size:10px;color:var(--text3)">${d.time.slice(5)}</td>
-                <td style="padding:5px 8px;font-size:10px;color:${d.type==='LONG'?'#10b981':'#ef4444'}">${d.type}</td>
+              const actionLabel  = {GO:'GO',SKIP:'SKIP',REDUCE_SIZE:'½x',DOUBLE_SIZE:'2x'};
+              const resultColor  = d.result==='WIN'?'#10b981':d.result==='LOSS'?'#ef4444':'#f59e0b';
+              const pnlColor     = d.pnl>=0?'#10b981':'#ef4444';
+              const simColor2    = d.sim_pnl>d.pnl?'#10b981':d.sim_pnl<d.pnl?'#ef4444':'var(--text3)';
+              const correctIcon  = d.correct?'✅':'❌';
+              // Φόντο: SKIP+LOSS=σωστό(πράσινο), SKIP+WIN=λάθος(κόκκινο)
+              // DOUBLE+WIN=σωστό, DOUBLE+LOSS=λάθος, REDUCE+LOSS=σωστό
+              const rowBg =
+                (d.action==='SKIP'   && d.result==='LOSS') ? 'rgba(74,222,128,0.05)' :
+                (d.action==='SKIP'   && d.result==='WIN')  ? 'rgba(239,68,68,0.07)'  :
+                (d.action==='DOUBLE_SIZE' && d.result==='WIN')  ? 'rgba(59,130,246,0.07)' :
+                (d.action==='REDUCE_SIZE' && d.result==='LOSS') ? 'rgba(74,222,128,0.05)' : '';
+              // sim_pnl label
+              const simLabel = d.action==='SKIP' ? '<span style="color:var(--text3);font-size:9px">— (skip)</span>'
+                : `<span style="color:${simColor2};font-size:10px">${d.sim_pnl>=0?'+':''}$${Math.abs(d.sim_pnl).toFixed(0)}</span>`;
+              // diff label
+              const diff = d.sim_pnl - d.pnl;
+              const diffLabel = d.action==='SKIP'
+                ? `<span style="color:${d.pnl<0?'#10b981':'#ef4444'};font-size:9px">${d.pnl<0?'saved $'+Math.abs(d.pnl).toFixed(0):'missed $'+Math.abs(d.pnl).toFixed(0)}</span>`
+                : diff===0 ? '' : `<span style="color:${diff>0?'#10b981':'#ef4444'};font-size:9px">${diff>0?'+':''}$${Math.abs(diff).toFixed(0)}</span>`;
+              return \`<tr style="background:\${rowBg};border-bottom:1px solid rgba(255,255,255,0.04)">
+                <td style="padding:5px 8px;font-size:10px;color:var(--text3)">\${d.time.slice(5)}</td>
+                <td style="padding:5px 8px;font-size:10px;color:\${d.type==='LONG'?'#10b981':'#ef4444'}">\${d.type}</td>
                 <td style="padding:5px 8px">
-                  <span style="font-size:10px;color:${actionColors[d.action]||'#fff'};font-weight:600">
-                    ${actionIcons[d.action]||''} ${d.action==='REDUCE_SIZE'?'½x':d.action==='DOUBLE_SIZE'?'2x':d.action}
-                  </span>
-                  <span style="font-size:9px;color:var(--text3);margin-left:4px">${d.conf}%</span>
+                  <span style="font-size:10px;color:\${actionColors[d.action]||'#fff'};font-weight:600">\${actionIcons[d.action]||''} \${actionLabel[d.action]||d.action}</span>
+                  <span style="font-size:9px;color:var(--text3);margin-left:4px">\${d.conf}%</span>
                 </td>
-                <td style="padding:5px 8px;font-size:10px;color:${resultColor}">${d.result}</td>
-                <td style="padding:5px 8px;font-size:10px;color:${pnlColor};text-align:right">${d.pnl>=0?'+':''}$${Math.abs(d.pnl).toFixed(0)}</td>
-                <td style="padding:5px 8px;text-align:center">${correctIcon}</td>
-              </tr>`;
+                <td style="padding:5px 8px;font-size:10px;color:\${resultColor}">\${d.result}</td>
+                <td style="padding:5px 8px;font-size:10px;color:\${pnlColor};text-align:right">\${d.pnl>=0?'+':''}$\${Math.abs(d.pnl).toFixed(0)}</td>
+                <td style="padding:5px 8px;text-align:right">\${simLabel}</td>
+                <td style="padding:5px 8px;text-align:right">\${diffLabel}</td>
+                <td style="padding:5px 8px;text-align:center">\${correctIcon}</td>
+              </tr>\`;
             }).join('');
 
-            return `
+            return \`
             <div style="margin-top:16px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                 <div style="font-size:11px;font-weight:600;color:var(--text2);letter-spacing:0.5px">
-                  📋 SHADOW DECISIONS — ${decisions.length} trades · ${accuracy}% correct
+                  📋 SHADOW DECISIONS — \${decisions.length} trades · \${accuracy}% correct
                 </div>
-                <div style="font-size:11px;font-weight:600;color:${simColor}">
-                  Simulated impact: ${simSign}$${Math.abs(simDiff).toFixed(2)}
-                  <span style="font-size:9px;color:var(--text3);font-weight:400;margin-left:4px">(αν ήταν active)</span>
+                <div style="font-size:11px;font-weight:600;color:\${simColor}">
+                  Αν Active: \${simSign}$\${Math.abs(simDiff).toFixed(2)}
+                  <span style="font-size:9px;color:var(--text3);font-weight:400;margin-left:4px">vs πραγματικό</span>
                 </div>
               </div>
               <div style="overflow-x:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
                 <table style="width:100%;border-collapse:collapse">
                   <thead>
                     <tr style="background:rgba(255,255,255,0.03)">
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">TIME</th>
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">TYPE</th>
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">AI DECISION</th>
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600;letter-spacing:0.5px">RESULT</th>
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:right;font-weight:600;letter-spacing:0.5px">P&L</th>
-                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:center;font-weight:600;letter-spacing:0.5px">✓</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600">TIME</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600">TYPE</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600">AI</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:left;font-weight:600">RESULT</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:right;font-weight:600">P&L</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:right;font-weight:600">ΑΝ ACTIVE</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:right;font-weight:600">ΔΙΑΦΟΡΑ</th>
+                      <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:center;font-weight:600">✓</th>
                     </tr>
                   </thead>
-                  <tbody>${rows}</tbody>
+                  <tbody>\${rows}</tbody>
                 </table>
               </div>
-            </div>`;
+              <div style="margin-top:8px;font-size:9px;color:var(--text3);line-height:1.6">
+                🟢 SKIP + LOSS = σωστή απόφαση &nbsp;|&nbsp; 🔴 SKIP + WIN = χαμένη ευκαιρία &nbsp;|&nbsp; 🔵 DOUBLE + WIN = σωστή επιθετική θέση
+              </div>
+            </div>\`;
           })()}
 
           ${(() => {
