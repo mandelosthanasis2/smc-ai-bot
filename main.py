@@ -120,7 +120,7 @@ COACH_HTML = """
   </div>
 
   <div class="suggestions" id="suggestions">
-    {{ suggestions }}
+    {{ suggestions | safe }}
   </div>
 
   <div class="input-wrap">
