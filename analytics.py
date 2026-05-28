@@ -731,18 +731,18 @@ function renderStrategy(s, d) {
               const diffLabel = d.action==='SKIP'
                 ? `<span style="color:${d.pnl<0?'#10b981':'#ef4444'};font-size:9px">${d.pnl<0?'saved $'+Math.abs(d.pnl).toFixed(0):'missed $'+Math.abs(d.pnl).toFixed(0)}</span>`
                 : diff===0 ? '' : `<span style="color:${diff>0?'#10b981':'#ef4444'};font-size:9px">${diff>0?'+':''}$${Math.abs(diff).toFixed(0)}</span>`;
-              return `<tr style="background:\\${rowBg};border-bottom:1px solid rgba(255,255,255,0.04)">
-                <td style="padding:5px 8px;font-size:10px;color:var(--text3)">\\${d.time.slice(5)}</td>
-                <td style="padding:5px 8px;font-size:10px;color:\\${d.type==='LONG'?'#10b981':'#ef4444'}">\\${d.type}</td>
+              return `<tr style="background:${rowBg};border-bottom:1px solid rgba(255,255,255,0.04)">
+                <td style="padding:5px 8px;font-size:10px;color:var(--text3)">${d.time.slice(5)}</td>
+                <td style="padding:5px 8px;font-size:10px;color:${d.type==='LONG'?'#10b981':'#ef4444'}">${d.type}</td>
                 <td style="padding:5px 8px">
-                  <span style="font-size:10px;color:\\${actionColors[d.action]||'#fff'};font-weight:600">\\${actionIcons[d.action]||''} \\${actionLabel[d.action]||d.action}</span>
-                  <span style="font-size:9px;color:var(--text3);margin-left:4px">\\${d.conf}%</span>
+                  <span style="font-size:10px;color:${actionColors[d.action]||'#fff'};font-weight:600">${actionIcons[d.action]||''} ${actionLabel[d.action]||d.action}</span>
+                  <span style="font-size:9px;color:var(--text3);margin-left:4px">${d.conf}%</span>
                 </td>
-                <td style="padding:5px 8px;font-size:10px;color:\\${resultColor}">\\${d.result}</td>
-                <td style="padding:5px 8px;font-size:10px;color:\\${pnlColor};text-align:right">\\${d.pnl>=0?'+':''}$\\${Math.abs(d.pnl).toFixed(0)}</td>
-                <td style="padding:5px 8px;text-align:right">\\${simLabel}</td>
-                <td style="padding:5px 8px;text-align:right">\\${diffLabel}</td>
-                <td style="padding:5px 8px;text-align:center">\\${correctIcon}</td>
+                <td style="padding:5px 8px;font-size:10px;color:${resultColor}">${d.result}</td>
+                <td style="padding:5px 8px;font-size:10px;color:${pnlColor};text-align:right">${d.pnl>=0?'+':''}$${Math.abs(d.pnl).toFixed(0)}</td>
+                <td style="padding:5px 8px;text-align:right">${simLabel}</td>
+                <td style="padding:5px 8px;text-align:right">${diffLabel}</td>
+                <td style="padding:5px 8px;text-align:center">${correctIcon}</td>
               </tr>`;
             }).join('');
 
@@ -750,10 +750,10 @@ function renderStrategy(s, d) {
             <div style="margin-top:16px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                 <div style="font-size:11px;font-weight:600;color:var(--text2);letter-spacing:0.5px">
-                  📋 SHADOW DECISIONS — \\${decisions.length} trades · \\${accuracy}% correct
+                  📋 SHADOW DECISIONS — ${decisions.length} trades · ${accuracy}% correct
                 </div>
-                <div style="font-size:11px;font-weight:600;color:\\${simColor}">
-                  Αν Active: \\${simSign}$\\${Math.abs(simDiff).toFixed(2)}
+                <div style="font-size:11px;font-weight:600;color:${simColor}">
+                  Αν Active: ${simSign}$${Math.abs(simDiff).toFixed(2)}
                   <span style="font-size:9px;color:var(--text3);font-weight:400;margin-left:4px">vs πραγματικό</span>
                 </div>
               </div>
@@ -771,7 +771,7 @@ function renderStrategy(s, d) {
                       <th style="padding:6px 8px;font-size:9px;color:var(--text3);text-align:center;font-weight:600">✓</th>
                     </tr>
                   </thead>
-                  <tbody>\\${rows}</tbody>
+                  <tbody>${rows}</tbody>
                 </table>
               </div>
               <div style="margin-top:8px;font-size:9px;color:var(--text3);line-height:1.6">
