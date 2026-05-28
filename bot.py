@@ -126,19 +126,59 @@ def _send_ai_trade_summary(strategy, side, entry_price, sl, tp,
     if ai_result is None:
         send_telegram(icon + " [AI] " + strategy + " " + side + " — Validator off")
         return
-    conf   = str(int(ai_result.confidence * 100)) + "%"
-    r      = ai_result.reasoning or {}
-    tech   = str(r.get("technical",   "N/A"))[:80]
-    news   = str(r.get("news",        "N/A"))[:80]
-    coord  = str(r.get("coordinator", "N/A"))[:120]
-    parts  = [
+
+    conf  = str(int(ai_result.confidence * 100)) + "%"
+    r     = ai_result.reasoning or {}
+    tech  = str(r.get("technical",   "N/A"))
+    news  = str(r.get("news",        "N/A"))
+    coord = str(r.get("coordinator", "N/A"))
+
+    # ── Εξαγωγή score και strengths/weaknesses από technical ──
+    score_str = ""
+    strengths_str = ""
+    weaknesses_str = ""
+    try:
+        tech_data = r.get("technical", {})
+        if isinstance(tech_data, dict):
+            score      = tech_data.get("score", "?")
+            summary    = tech_data.get("summary", "")
+            strengths  = tech_data.get("strengths",  [])
+            weaknesses = tech_data.get("weaknesses", [])
+            score_str  = f"Score={score}/10 | {summary}"
+            if strengths:
+                strengths_str  = "✅ " + " | ".join(str(s)[:45] for s in strengths[:2])
+            if weaknesses:
+                weaknesses_str = "⚠️ " + " | ".join(str(w)[:45] for w in weaknesses[:2])
+        else:
+            # Fallback: string format
+            score_str = str(tech_data)[:80]
+    except Exception:
+        score_str = tech[:80]
+
+    # ── News score extraction ──
+    news_short = news[:100] if news else "N/A"
+
+    # ── Coordinator short ──
+    coord_short = coord[:120] if coord else "N/A"
+
+    # ── Assemble message ──
+    parts = [
         icon + " <b>[AI" + shadow_tag + "] " + strategy + " " + ai_action + "</b>",
-        "<b>" + side + "</b> @ $" + str(int(entry_price)) + " | Conf: " + conf,
+        "<b>" + side + "</b> @ $" + f"{entry_price:,.0f}" + " | Conf: " + conf,
         "",
-        "📊 Tech: " + tech,
-        "📰 News: " + news,
-        "🎯 " + coord,
+        "📊 <b>Tech:</b> " + (score_str or tech[:60]),
     ]
+
+    if strengths_str:
+        parts.append("   " + strengths_str)
+    if weaknesses_str:
+        parts.append("   " + weaknesses_str)
+
+    parts += [
+        "📰 <b>News:</b> " + news_short,
+        "🎯 " + coord_short,
+    ]
+
     send_telegram("\n".join(parts))
 
 
