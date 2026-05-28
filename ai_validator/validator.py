@@ -148,6 +148,9 @@ def validate_signal(
             candles_4h        = context.get("candles_4h", []),
             extra_context     = context.get("extra", {}),
             candles_15m       = context.get("candles_15m", []),
+            candles_1h        = context.get("candles_1h",  []),
+            candles_5m        = context.get("candles_5m",  []),
+            candles_1d        = context.get("candles_1d",  []),
         )
     except Exception as e:
         log.error(f"[Validator] Technical agent error: {e}")
