@@ -186,7 +186,13 @@ def validate_signal(
         confidence      = coord.confidence,
         reasoning = {
             "coordinator": coord.reasoning,
-            "technical":   f"Score={technical.confluence_score}/10 | {technical.summary}",
+            "technical": {
+                "score":      technical.confluence_score,
+                "summary":    technical.summary,
+                "strengths":  technical.strengths  or [],
+                "weaknesses": technical.weaknesses or [],
+                "display":    f"Score={technical.confluence_score}/10 | {technical.summary}",
+            },
             "news":        f"Score={news.score} | {news.verdict} | {news.summary}",
             "pre_filter":  f"auto_reduce={pf.auto_reduce}" + (f" ({pf.auto_reduce_reason})" if pf.auto_reduce else ""),
         },
