@@ -381,7 +381,7 @@ def sb(active='a', username='', role=''):
 </div>'''
 
 def mn(active='a'):
-    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/d','d','D'),('/analytics','analytics','📈'),('/settings','settings','⚙')]
+    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/d','d','D'),('/analytics','analytics','📈'),('/coach','coach','📚'),('/settings','settings','⚙')]
     h = '<nav class="mn"><div class="mn-in">'
     for href,k,l in items:
         h += f'<a href="{href}" class="{"on" if active==k else ""}">{l}</a>'
