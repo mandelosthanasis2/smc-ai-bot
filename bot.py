@@ -704,6 +704,21 @@ DEFAULT_STATE_CM = {
     "trailing_enabled": True,
 }
 
+# ── Strategy SMC defaults (OB+FVG+CHoCH, webhook only, 2-phase TP) ──
+DEFAULT_STATE_SMC = {
+    "position": None, "last_signal": "Starting...", "last_signal_time": "",
+    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
+    "wins": 0, "losses": 0, "current_price": 0.0,
+    "last_cycle": "", "errors": [],
+}
+
+SAVED_STATE_SMC = {
+    "balance": 10000.0, "pnl_total": 0.0, "wins": 0, "losses": 0,
+    "position": None, "trades": [],
+}
+
+STATE_FILE_SMC = "/app/bot_state_smc.json"
+
 SAVED_STATE_D = {
     "balance": 10000.0,
     "pnl_total": 0.0,
@@ -761,6 +776,32 @@ def save_state_cm():
             json.dump(state_cm, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state CM error: {e}")
+
+def load_state_smc():
+    db = db_load_state("SMC")
+    if db:
+        merged = {**DEFAULT_STATE_SMC, **db}
+        log.info(f"State SMC from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    try:
+        if os.path.exists(STATE_FILE_SMC):
+            with open(STATE_FILE_SMC) as f: saved = json.load(f)
+            merged = {**DEFAULT_STATE_SMC, **saved}
+            log.info(f"State SMC from JSON: ${merged.get('balance',10000):.2f}")
+            return merged
+    except Exception as e:
+        log.warning(f"Load state SMC error: {e}")
+    merged = {**DEFAULT_STATE_SMC, **SAVED_STATE_SMC}
+    log.info(f"State SMC from SAVED_STATE_SMC: ${merged['balance']:.2f}")
+    return merged
+
+def save_state_smc():
+    db_save_state("SMC", state_smc)
+    try:
+        with open(STATE_FILE_SMC, "w") as f:
+            json.dump(state_smc, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Save state SMC JSON error: {e}")
 
 def load_state_c():
     # 1) Προσπαθεί από DB
@@ -866,6 +907,7 @@ seed_if_empty("A", SAVED_STATE)
 seed_if_empty("B", SAVED_STATE_B)
 seed_if_empty("C", SAVED_STATE_C)
 seed_if_empty("D", SAVED_STATE_D)
+seed_if_empty("SMC", SAVED_STATE_SMC)
 
 state   = load_state()
 state["running"] = True
@@ -873,6 +915,7 @@ state_b = load_state_b()
 state_c = load_state_c()
 state_d = load_state_d()
 state_cm = load_state_cm()
+state_smc = load_state_smc()
 
 # Race condition guards — αποτρέπουν διπλό AI call όταν το scheduler τρέχει κάθε 30s
 _b_entering = False
@@ -1623,6 +1666,81 @@ def run_strategy_cm():
     strategy_checkmark.on_tick(deps, state_cm, price)
 
 
+# =================================================================
+# POSITION MANAGEMENT - Strategy SMC (OB + FVG + CHoCH, webhook only)
+# Αυτόνομο module: strategies/strategy_smc.py — 2-phase TP
+# =================================================================
+
+def finalize_trade_smc(price, result, note=""):
+    pos = state_smc["position"]
+    if not pos: return
+    pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
+    state_smc["pnl_total"] = round(state_smc["pnl_total"] + pnl, 2)
+    state_smc["balance"]   = round(state_smc["balance"]   + pnl, 2)
+    if result == "WIN": state_smc["wins"]   += 1
+    elif result == "LOSS": state_smc["losses"] += 1
+    trade_smc = {
+        "type":       pos["type"],
+        "entry":      pos["entry"],
+        "close":      price,
+        "pnl":        pnl,
+        "result":     result,
+        "time":       datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": pos.get("has_confluence", False),
+        "note":       note,
+        "ai_action":     pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning":  pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
+    }
+    state_smc["trades"].append(trade_smc)
+    db_save_trade("SMC", trade_smc)
+    wins = state_smc["wins"]; losses = state_smc["losses"]
+    emoji = "✅" if result == "WIN" else ("➖" if result == "BREAK EVEN" else "❌")
+    send_telegram(
+        f"{emoji} <b>[SMC] {note or result}</b>\n"
+        f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
+        f"Balance: ${state_smc['balance']:,.2f}\n"
+        f"W/L: {wins}W/{losses}L"
+    )
+    state_smc["position"] = None
+    save_state_smc()
+
+
+def finalize_partial_smc(close_price, partial_qty, partial_pnl, note=""):
+    """Καταγράφει partial close (TP1 50%) — κρατάει τη θέση ανοιχτή."""
+    state_smc["balance"]   = round(state_smc["balance"]   + partial_pnl, 2)
+    state_smc["pnl_total"] = round(state_smc["pnl_total"] + partial_pnl, 2)
+    state_smc["wins"]     += 1
+    pos = state_smc["position"]
+    trade_smc = {
+        "type":   pos["type"] if pos else "",
+        "entry":  pos["entry"] if pos else 0,
+        "close":  close_price,
+        "pnl":    partial_pnl,
+        "result": "WIN",
+        "time":   datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": pos.get("has_confluence", False) if pos else False,
+        "note":   note,
+    }
+    state_smc["trades"].append(trade_smc)
+    db_save_trade("SMC", trade_smc)
+    log.info(f"[SMC] Partial close @ {close_price:.2f} | +${partial_pnl:.2f}")
+    save_state_smc()
+
+
+def check_position_smc(price):
+    """Καλεί το αυτόνομο module για διαχείριση θέσης (2-phase TP)."""
+    from strategies import strategy_smc
+    deps = {
+        "finalize":         finalize_trade_smc,
+        "finalize_partial": finalize_partial_smc,
+        "send_telegram":    send_telegram,
+        "save_state":       save_state_smc,
+    }
+    strategy_smc.check_position(deps, state_smc, price)
+
+
 def check_position_d(price):
     pos = state_d["position"]
     if not pos: return
@@ -1775,6 +1893,16 @@ def bot_loop():
                 except Exception as e:
                     log.error(f"Strategy D error: {e}")
             save_state_d()
+
+            # Strategy SMC: check open position every 30s (entries via webhook only)
+            state_smc["last_cycle"]    = now_str
+            state_smc["current_price"] = rt.price
+            if state_smc["position"]:
+                try:
+                    check_position_smc(rt.price)
+                except Exception as e:
+                    log.error(f"Strategy SMC error: {e}")
+            save_state_smc()
 
         except Exception as e:
             log.error(f"Main loop error: {e}")
