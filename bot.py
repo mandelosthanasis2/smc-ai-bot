@@ -686,6 +686,7 @@ SAVED_STATE_C = {
 
 STATE_FILE_C = "/app/bot_state_c.json"
 STATE_FILE_D = "/app/bot_state_d.json"
+STATE_FILE_CM = "/app/bot_state_cm.json"
 
 # ── Strategy D defaults ──────────────────────────────────────────
 DEFAULT_STATE_D = {
@@ -693,6 +694,14 @@ DEFAULT_STATE_D = {
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "current_price": 0.0,
     "last_cycle": "", "errors": [], "last_ob": None, "last_fvg": None,
+}
+
+DEFAULT_STATE_CM = {
+    "position": None, "last_signal": "Starting...", "last_signal_time": "",
+    "trades": [], "balance": 10000.0, "pnl_total": 0.0,
+    "wins": 0, "losses": 0, "current_price": 0.0,
+    "last_cycle": "", "errors": [], "checkmark": None,
+    "trailing_enabled": True,
 }
 
 SAVED_STATE_D = {
@@ -729,6 +738,29 @@ def save_state_d():
             json.dump(state_d, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state D JSON error: {e}")
+
+
+def load_state_cm():
+    db = db_load_state("CM")
+    if db:
+        merged = {**DEFAULT_STATE_CM, **db}
+        log.info(f"State CM from DB: ${merged['balance']:.2f} W{merged['wins']}/L{merged['losses']}")
+        return merged
+    try:
+        if os.path.exists(STATE_FILE_CM):
+            with open(STATE_FILE_CM) as f: saved = json.load(f)
+            return {**DEFAULT_STATE_CM, **saved}
+    except Exception as e:
+        log.warning(f"Load state CM error: {e}")
+    return {**DEFAULT_STATE_CM}
+
+def save_state_cm():
+    db_save_state("CM", state_cm)
+    try:
+        with open(STATE_FILE_CM, "w") as f:
+            json.dump(state_cm, f, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"Save state CM error: {e}")
 
 def load_state_c():
     # 1) Προσπαθεί από DB
@@ -840,6 +872,7 @@ state["running"] = True
 state_b = load_state_b()
 state_c = load_state_c()
 state_d = load_state_d()
+state_cm = load_state_cm()
 
 # Race condition guards — αποτρέπουν διπλό AI call όταν το scheduler τρέχει κάθε 30s
 _b_entering = False
@@ -1532,6 +1565,64 @@ def finalize_trade_d(price, result, note=""):
     state_d["position"] = None
     save_state_d()
 
+
+def finalize_trade_cm(price, result, note=""):
+    pos = state_cm["position"]
+    if not pos: return
+    pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
+    state_cm["pnl_total"] = round(state_cm["pnl_total"] + pnl, 2)
+    state_cm["balance"]   = round(state_cm["balance"]   + pnl, 2)
+    if result == "WIN": state_cm["wins"]   += 1
+    else:               state_cm["losses"] += 1
+    trade_cm = {
+        "type":       pos["type"],
+        "entry":      pos["entry"],
+        "close":      price,
+        "pnl":        pnl,
+        "result":     result,
+        "time":       datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": False,
+        "note":       note,
+        "ai_action":     pos.get("ai_action", ""),
+        "ai_confidence": pos.get("ai_confidence", 0),
+        "ai_reasoning":  pos.get("ai_reasoning", ""),
+        "ai_shadow_mode": pos.get("ai_shadow", False),
+    }
+    state_cm["trades"].append(trade_cm)
+    db_save_trade("CM", trade_cm)
+    wins = state_cm["wins"]; losses = state_cm["losses"]
+    emoji = "✅" if result == "WIN" else "❌"
+    send_telegram(
+        f"{emoji} <b>[CM] {note or result}</b>\n"
+        f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
+        f"Balance: ${state_cm['balance']:,.2f}\n"
+        f"W/L: {wins}W/{losses}L"
+    )
+    state_cm["position"] = None
+    save_state_cm()
+
+
+def run_strategy_cm():
+    """Check Mark strategy — καλεί το αυτόνομο module."""
+    from strategies import strategy_checkmark
+    price = rt.price
+    state_cm["current_price"] = price
+    if price <= 0 or not rt.initialized:
+        state_cm["last_signal"] = "Initializing..."
+        return
+    deps = {
+        "get_candles":    get_candles,
+        "place_order":    place_order_paper,
+        "finalize":       finalize_trade_cm,
+        "send_telegram":  send_telegram,
+        "ai_validate":    _ai_validate,
+        "save_state":     save_state_cm,
+        "send_ai_summary":_send_ai_trade_summary,
+        "rt":             rt,
+    }
+    strategy_checkmark.on_tick(deps, state_cm, price)
+
+
 def check_position_d(price):
     pos = state_d["position"]
     if not pos: return
@@ -1653,6 +1744,16 @@ def bot_loop():
                 state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
                 state_b["errors"] = state_b["errors"][-10:]
             save_state_b()
+
+            # Strategy CM (Check Mark) every 30s
+            state_cm["last_cycle"] = now_str
+            try:
+                run_strategy_cm()
+            except Exception as e:
+                log.error(f"Strategy CM error: {e}")
+                state_cm["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                state_cm["errors"] = state_cm["errors"][-10:]
+            save_state_cm()
 
             # Strategy C: check open position every 30s (entries via webhook only)
             state_c["last_cycle"]    = now_str
