@@ -444,13 +444,13 @@ def sb(active='a', username='', role=''):
         ('a','#4d9eff','A','Daily Box + RSI'),
         ('b','#a855f7','B','1H Box + 15m RSI'),
         ('c','#ff7c3f','C','1H Box + Webhook'),
-        ('d','#00d4c8','D','Order Block + FVG'),
+        ('cm','#00d4c8','CM','Check Mark Pattern'),
     ]
     sh = ''
     for k,c,l,d in strats:
         on = 'on' if active==k else ''
         col = f'color:{c}' if active==k else ''
-        sh += f'<a href="/{""if k=="a" else k}" class="sb-strat {on}"><span class="sb-dot" style="background:{c}"></span><span><div class="sn" style="{col}">Strategy {l}</div><div class="sd">{d}</div></span></a>'
+        sh += f'<a href="/{""if k=="a" else k}" class="sb-strat {on}"><span class="sb-dot" style="background:{c}"></span><span><div class="sn" style="{col}">{("Check Mark" if k=="cm" else "Strategy "+l)}</div><div class="sd">{d}</div></span></a>'
     al = f'<a href="/admin" class="sb-a {"on" if active=="admin" else ""}"><span>🛡</span><span>Admin</span></a>' if role=='admin' else ''
     ini = username[:2].upper() if username else 'U'
     return f'''<div class="sb">
