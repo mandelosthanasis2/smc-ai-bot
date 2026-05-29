@@ -329,11 +329,16 @@ def on_tick(deps, state, price):
         save_state()
 
     # ── Αν τελείωσε για σήμερα ──
-    if cm["stage"] in (STAGE_DONE, STAGE_ENTERED):
+    if cm["stage"] == STAGE_DONE:
+        state["last_signal"] = "Done for today — next scan tomorrow 13:30 UTC"
+        return
+    if cm["stage"] == STAGE_ENTERED:
+        state["last_signal"] = "Position entered ✓"
         return
 
     # ── Πρέπει να έχει περάσει το opening ──
     if not _past_opening(cfg):
+        state["last_signal"] = "Waiting for NY open (13:30 UTC)"
         return
 
     # ── Εκτός session window → done ──
@@ -346,6 +351,7 @@ def on_tick(deps, state, price):
 
     # STAGE 1: WAITING_CHECK → ψάχνει manipulation + blowoff
     if cm["stage"] == STAGE_WAITING_CHECK:
+        state["last_signal"] = "Scanning for Check (manipulation + blowoff)"
         check = _detect_check(deps, cm, cfg)
         if check:
             cm["check"] = check
@@ -363,6 +369,7 @@ def on_tick(deps, state, price):
 
     # STAGE 2: WAITING_PIVOT → double/triple test
     if cm["stage"] == STAGE_WAITING_PIVOT:
+        state["last_signal"] = f"Check formed ({cm['check']['side']}) — waiting pivot test"
         confirmed, tests = _detect_pivot(deps, cm, cfg)
         if confirmed:
             cm["stage"]       = STAGE_PIVOT_CONFIRMED
@@ -377,6 +384,7 @@ def on_tick(deps, state, price):
 
     # STAGE 3: PIVOT_CONFIRMED → entry trigger
     if cm["stage"] == STAGE_PIVOT_CONFIRMED:
+        state["last_signal"] = f"Pivot confirmed — waiting entry trigger ({cm['check']['side']})"
         entry = _detect_entry(deps, cm, cfg)
         if entry:
             _execute_entry(deps, state, entry, cm)
