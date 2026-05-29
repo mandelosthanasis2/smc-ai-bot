@@ -151,12 +151,9 @@ def init_db():
                     ai_shadow_mode BOOLEAN DEFAULT TRUE
             """)
 
-        # Migration: επέκταση strategy column για multi-char names (CM, etc.)
-        try:
+            # Migration: επέκταση strategy column για multi-char names (CM, etc.)
             cur.execute("ALTER TABLE bot_state ALTER COLUMN strategy TYPE VARCHAR(4)")
             cur.execute("ALTER TABLE trades    ALTER COLUMN strategy TYPE VARCHAR(4)")
-        except Exception as _mig_e:
-            log.warning(f"Strategy column migration skipped: {_mig_e}")
 
         conn.commit()
         log.info("DB schema ready ✓")
