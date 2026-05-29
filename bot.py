@@ -975,25 +975,41 @@ def check_position_a(price):
         if TRADING_MODE == "LIVE": close_position_live(pos["type"], pqty)
         save_state()
 
-    # Phase 3+4: Past TP - Trailing stop
+    # Phase 3+4: Past TP - Trailing stop (SL ποτέ κάτω από το TP)
     past_tp = (is_long and price>=tp) or (not is_long and price<=tp)
     if past_tp:
         if not pos.get("trailing_active"):
             pos["trailing_active"] = True
-            pos["trailing_high"]   = price
-            log.info(f"[A] Phase 3: Trailing activated @ {price:.2f}")
-            send_telegram(f"🚀 <b>[A] TRAILING ACTIVE</b>\nPassed TP ${tp:,.2f}")
+            pos["trailing_peak"]   = price
+            init_tsl = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
+            # Trailing SL ξεκινάει στο TP (ή λίγο πιο πάνω) — ποτέ κάτω από TP
+            pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)
+            log.info(f"[A] Phase 3: Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
+            send_telegram(f"🚀 <b>[A] TRAILING ACTIVE</b>\nPassed TP ${tp:,.2f}\nTrailing SL: ${pos['trailing_sl']:,.2f}")
             save_state()
+            return
 
-        # Update trailing high
-        if is_long: pos["trailing_high"] = max(pos.get("trailing_high",price), price)
-        else:       pos["trailing_high"] = min(pos.get("trailing_high",price), price)
-
-        th = pos["trailing_high"]
-        ts = th*0.99 if is_long else th*1.01
-        if (is_long and price<=ts) or (not is_long and price>=ts):
-            log.info(f"[A] Phase 4: Trailing hit @ {price:.2f} (high={th:.2f})")
-            finalize_trade_a(price, "WIN", f"TRAILING (high=${th:,.2f})")
+        peak = pos.get("trailing_peak", price)
+        if is_long:
+            if price > peak:
+                pos["trailing_peak"] = price
+                new_tsl = round(price * (1 - 0.003), 2)
+                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
+                save_state()
+            if price <= pos["trailing_sl"]:
+                log.info(f"[A] Phase 4: Trailing hit @ {price:.2f} (peak={peak:.2f})")
+                finalize_trade_a(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
+        else:
+            if price < peak:
+                pos["trailing_peak"] = price
+                new_tsl = round(price * (1 + 0.003), 2)
+                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
+                save_state()
+            if price >= pos["trailing_sl"]:
+                log.info(f"[A] Phase 4: Trailing hit @ {price:.2f} (peak={peak:.2f})")
+                finalize_trade_a(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
+                return
         return
 
     # Normal SL
