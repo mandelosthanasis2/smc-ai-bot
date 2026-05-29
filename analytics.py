@@ -549,6 +549,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
     <a href="/" class="nav-link">Dashboard A</a>
     <a href="/b" class="nav-link">Dashboard B</a>
     <a href="/c" class="nav-link">Dashboard C</a>
+    <a href="/cm" class="nav-link">Check Mark</a>
   </div>
   <div class="nav-right">
     <span style="font-size:10px;color:var(--text3);letter-spacing:1px;">ANALYTICS</span>
@@ -559,6 +560,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
   <button class="tab active" data-tab="A" onclick="switchTab('A')">Strategy A</button>
   <button class="tab" data-tab="B" onclick="switchTab('B')">Strategy B</button>
   <button class="tab" data-tab="C" onclick="switchTab('C')">Strategy C</button>
+  <button class="tab" data-tab="CM" onclick="switchTab('CM')">Check Mark</button>
   <button class="tab" data-tab="compare" onclick="switchTab('compare')">⚡ Compare</button>
   <button class="tab" data-tab="timing" onclick="switchTab('timing')">⏱ Timing</button>
 </div>
@@ -579,6 +581,12 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
 <div class="content" id="tab-C">
   <div class="loading" id="loading-C">Loading Strategy C...</div>
   <div id="data-C" style="display:none;"></div>
+</div>
+
+<!-- CHECK MARK -->
+<div class="content" id="tab-CM">
+  <div class="loading" id="loading-CM">Loading Check Mark...</div>
+  <div id="data-CM" style="display:none;"></div>
 </div>
 
 <!-- COMPARE -->
