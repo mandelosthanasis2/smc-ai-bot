@@ -84,7 +84,7 @@ def init_db():
             # BOT STATE — προσθήκη user_id αν δεν υπάρχει
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS bot_state (
-                    strategy    VARCHAR(1),
+                    strategy    VARCHAR(4),
                     user_id     INTEGER REFERENCES users(id),
                     balance     NUMERIC(12,2) NOT NULL DEFAULT 10000,
                     pnl_total   NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -101,7 +101,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS trades (
                     id          SERIAL PRIMARY KEY,
                     user_id     INTEGER REFERENCES users(id),
-                    strategy    VARCHAR(1) NOT NULL,
+                    strategy    VARCHAR(4) NOT NULL,
                     type        VARCHAR(5) NOT NULL,
                     entry       NUMERIC(12,2),
                     close       NUMERIC(12,2),
@@ -150,6 +150,13 @@ def init_db():
                 ALTER TABLE trades ADD COLUMN IF NOT EXISTS
                     ai_shadow_mode BOOLEAN DEFAULT TRUE
             """)
+
+        # Migration: επέκταση strategy column για multi-char names (CM, etc.)
+        try:
+            cur.execute("ALTER TABLE bot_state ALTER COLUMN strategy TYPE VARCHAR(4)")
+            cur.execute("ALTER TABLE trades    ALTER COLUMN strategy TYPE VARCHAR(4)")
+        except Exception as _mig_e:
+            log.warning(f"Strategy column migration skipped: {_mig_e}")
 
         conn.commit()
         log.info("DB schema ready ✓")
