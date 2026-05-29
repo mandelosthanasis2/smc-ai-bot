@@ -17,6 +17,7 @@ STRATEGIES = {
     "B":  {"name": "Strategy B",  "color": "#8b5cf6", "desc": "1H Box + 15m RSI"},
     "C":  {"name": "Strategy C",  "color": "#f97316", "desc": "TV Webhook + 1H Box"},
     "CM": {"name": "Check Mark",  "color": "#14b8a6", "desc": "Check Mark Pattern"},
+    "SMC": {"name": "Strategy SMC", "color": "#f5c518", "desc": "OB + FVG + CHoCH"},
 }
 
 # =================================================================
@@ -444,6 +445,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
 .tab[data-tab="A"].active{color:var(--a);}
 .tab[data-tab="B"].active{color:var(--b);}
 .tab[data-tab="C"].active{color:var(--c);}
+.tab[data-tab="SMC"].active{color:#f5c518;}
 .tab[data-tab="compare"].active{color:var(--yellow);}
 
 /* CONTENT */
@@ -550,6 +552,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
     <a href="/b" class="nav-link">Dashboard B</a>
     <a href="/c" class="nav-link">Dashboard C</a>
     <a href="/cm" class="nav-link">Check Mark</a>
+    <a href="/smc" class="nav-link">SMC</a>
   </div>
   <div class="nav-right">
     <span style="font-size:10px;color:var(--text3);letter-spacing:1px;">ANALYTICS</span>
@@ -561,6 +564,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
   <button class="tab" data-tab="B" onclick="switchTab('B')">Strategy B</button>
   <button class="tab" data-tab="C" onclick="switchTab('C')">Strategy C</button>
   <button class="tab" data-tab="CM" onclick="switchTab('CM')">Check Mark</button>
+  <button class="tab" data-tab="SMC" onclick="switchTab('SMC')">SMC</button>
   <button class="tab" data-tab="compare" onclick="switchTab('compare')">⚡ Compare</button>
   <button class="tab" data-tab="timing" onclick="switchTab('timing')">⏱ Timing</button>
 </div>
@@ -587,6 +591,12 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
 <div class="content" id="tab-CM">
   <div class="loading" id="loading-CM">Loading Check Mark...</div>
   <div id="data-CM" style="display:none;"></div>
+</div>
+
+<!-- SMC -->
+<div class="content" id="tab-SMC">
+  <div class="loading" id="loading-SMC">Loading SMC...</div>
+  <div id="data-SMC" style="display:none;"></div>
 </div>
 
 <!-- COMPARE -->
@@ -1205,7 +1215,7 @@ async function loadTiming() {
   }
 
   // Συγκεντρώνουμε όλα τα trades απ' όλες τις strategies
-  const strats = ['A','B','C','D'];
+  const strats = ['A','B','C','CM','SMC'];
   let byHour = {};
   let byDay  = {};
 
