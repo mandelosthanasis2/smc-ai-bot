@@ -556,6 +556,15 @@ TMPL = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  {% elif strategy_id == 'CM' %}
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">Signal Source</div></div>
+    <div style="padding:26px 14px;text-align:center">
+      <div style="font-size:26px;margin-bottom:6px">✓</div>
+      <div style="font-size:11px;color:var(--t2)">Check Mark Pattern<br>Auto-scan @ 13:30 UTC (NY open)</div>
+      <div style="font-size:10px;color:var(--t3);margin-top:8px">Manipulation → Blowoff → Pivot → Entry</div>
+    </div>
+  </div>
   {% else %}
   <div class="cd">
     <div class="cd-hd"><div class="cd-tt">Signal Source</div></div>
@@ -612,6 +621,36 @@ TMPL = """<!DOCTYPE html>
     {% endif %}
   </div>
 </div>
+
+{% if strategy_id == 'CM' %}
+<div class="cd" style="margin-top:10px">
+  <div class="cd-hd"><div class="cd-tt">📖 Πώς δουλεύει η Check Mark</div></div>
+  <div class="cd-bd" style="padding:16px;font-size:12px;line-height:1.7;color:var(--t2)">
+    <p style="margin-bottom:12px">Η στρατηγική εκμεταλλεύεται τη <b style="color:var(--t1)">χειραγώγηση τιμής</b> στο άνοιγμα της US session (13:30 UTC). Το σχήμα στο chart μοιάζει με τσεκ (✓).</p>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#14b8a6;font-weight:600;margin-bottom:4px">1️⃣ THE CHECK (Opening Range)</div>
+      <div style="color:var(--t3)">Παίρνει το πρώτο 15m κερί μετά το NY open. Ελέγχει αν είναι <b>Manipulation Candle</b> (εύρος &gt; 20% του Daily ATR) και <b>Blowoff</b> (έσπασε το προηγούμενο day high/low και γύρισε πίσω — σκοτώνοντας τα stop-losses).</div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#14b8a6;font-weight:600;margin-bottom:4px">2️⃣ THE PIVOT (Επιβεβαίωση)</div>
+      <div style="color:var(--t3)">Στο 5m chart ψάχνει <b>double/triple test</b> της ζώνης: η τιμή ξαναπλησιάζει το level αλλά δεν το σπάει και αναπηδά. Επιβεβαιώνει ότι οι buyers/sellers είναι πραγματικά εκεί.</div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#14b8a6;font-weight:600;margin-bottom:4px">3️⃣ THE MARK (Είσοδος)</div>
+      <div style="color:var(--t3)">Entry όταν πράσινο 5m κερί κλείνει πάνω από κόκκινο (LONG) ή το αντίστροφο (SHORT). <b>SL:</b> κάτω από το blowoff low. <b>TP1:</b> day high (conservative). <b>TP2:</b> blowoff range projection (aggressive).</div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px;background:rgba(20,184,166,.08);border-radius:6px;border:1px solid rgba(20,184,166,.2)">
+      <div style="font-size:11px;color:var(--t3)">⚙️ <b style="color:var(--t1)">Ρυθμίσεις:</b> Σκαν @ 13:30 UTC · ATR threshold 20% · Pivot 2+ tests · Risk 2% · Trailing stop ενεργό (ποτέ κάτω από TP)</div>
+    </div>
+
+    <div style="margin-top:8px;font-size:10px;color:var(--t3)">Μετά το entry, περνά από τον AI Validator (trend, OB, FVG, volume, news, knowledge base) για την τελική απόφαση GO/SKIP/DOUBLE/REDUCE.</div>
+  </div>
+</div>
+{% endif %}
 
 {% if nsm is defined and nsm %}
 <div class="cd" style="margin-top:10px">
