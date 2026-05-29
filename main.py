@@ -6,7 +6,7 @@ New design: sidebar, cards, mobile-first, no TradingView
 import os
 import threading
 from flask import Flask, render_template_string, jsonify, session
-from bot import state, state_b, state_c, state_d, state_cm, bot_thread
+from bot import state, state_b, state_c, state_d, state_cm, state_smc, bot_thread
 from config import PORT
 from analytics import analytics_bp
 from auth import auth_bp, login_required
@@ -445,6 +445,7 @@ def sb(active='a', username='', role=''):
         ('b','#a855f7','B','1H Box + 15m RSI'),
         ('c','#ff7c3f','C','1H Box + Webhook'),
         ('cm','#00d4c8','CM','Check Mark Pattern'),
+        ('smc','#f5c518','SMC','OB + FVG + CHoCH'),
     ]
     sh = ''
     for k,c,l,d in strats:
@@ -466,7 +467,7 @@ def sb(active='a', username='', role=''):
 </div>'''
 
 def mn(active='a'):
-    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/cm','cm','CM'),('/analytics','analytics','📈'),('/coach','coach','📚'),('/settings','settings','⚙')]
+    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/cm','cm','CM'),('/smc','smc','SMC'),('/analytics','analytics','📈'),('/coach','coach','📚'),('/settings','settings','⚙')]
     h = '<nav class="mn"><div class="mn-in">'
     for href,k,l in items:
         h += f'<a href="{href}" class="{"on" if active==k else ""}">{l}</a>'
@@ -827,6 +828,16 @@ def strategy_cm():
 @login_required
 def api_cm(): return jsonify(state_cm)
 
+@app.route('/smc')
+@login_required
+def strategy_smc_page():
+    s = dict(state_smc); s['box'] = None
+    return render_dash('smc','/api/smc','pu', s)
+
+@app.route('/api/smc')
+@login_required
+def api_smc(): return jsonify(state_smc)
+
 
 # ── WEBHOOKS (no login) ──────────────────────────────────────
 from flask import request
@@ -875,6 +886,30 @@ def _wh_d(sig, price=None, data=None):
         state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
+
+def _wh_smc(sig, price=None, data=None):
+    """SMC webhook → delegate στο αυτόνομο strategies/strategy_smc.py module."""
+    from bot import (rt, state_smc, save_state_smc, send_telegram, calc_qty,
+                     place_order_paper, place_order_live, _ai_validate,
+                     _send_ai_trade_summary, TRADING_MODE)
+    from strategies import strategy_smc
+
+    def _place(side, qty, entry, sl, tp):
+        return (place_order_paper(side, qty, entry, sl, tp) if TRADING_MODE == "PAPER"
+                else place_order_live(side, qty, sl, tp))
+
+    deps = {
+        "get_price":       lambda: rt.price,
+        "calc_qty":        calc_qty,
+        "place_order":     _place,
+        "send_telegram":   send_telegram,
+        "ai_validate":     _ai_validate,
+        "save_state":      save_state_smc,
+        "send_ai_summary": _send_ai_trade_summary,
+        "trading_mode":    TRADING_MODE,
+        "rt":              rt,
+    }
+    strategy_smc.process_webhook(deps, state_smc, sig, price, data)
 
 def _wh_a(sig, price=None, data=None):
     from bot import rt,state,build_daily_box,get_candles,calc_qty,place_order_paper,place_order_live
@@ -1131,6 +1166,15 @@ def webhook_d():
         if sig not in ('LONG','SHORT'): return {'error':'Invalid'},400
         threading.Thread(target=lambda:_wh_d(sig,px,d),daemon=True).start()
         return {'ok':True,'strategy':'D'}
+    except Exception as e: return {'error':str(e)},500
+
+@app.route('/webhook/smc', methods=['POST'])
+def webhook_smc():
+    try:
+        d=request.get_json(force=True) or {}; sig=d.get('signal','').upper(); px=float(d.get('price',0)) or None
+        if sig not in ('LONG','SHORT'): return {'error':'Invalid'},400
+        threading.Thread(target=lambda:_wh_smc(sig,px,d),daemon=True).start()
+        return {'ok':True,'strategy':'SMC'}
     except Exception as e: return {'error':str(e)},500
 
 if __name__ == '__main__':
