@@ -6,7 +6,7 @@ New design: sidebar, cards, mobile-first, no TradingView
 import os
 import threading
 from flask import Flask, render_template_string, jsonify, session
-from bot import state, state_b, state_c, state_d, bot_thread
+from bot import state, state_b, state_c, state_d, state_cm, bot_thread
 from config import PORT
 from analytics import analytics_bp
 from auth import auth_bp, login_required
@@ -466,7 +466,7 @@ def sb(active='a', username='', role=''):
 </div>'''
 
 def mn(active='a'):
-    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/d','d','D'),('/analytics','analytics','📈'),('/coach','coach','📚'),('/settings','settings','⚙')]
+    items = [('/', 'a','A'),('/b','b','B'),('/c','c','C'),('/cm','cm','CM'),('/analytics','analytics','📈'),('/coach','coach','📚'),('/settings','settings','⚙')]
     h = '<nav class="mn"><div class="mn-in">'
     for href,k,l in items:
         h += f'<a href="{href}" class="{"on" if active==k else ""}">{l}</a>'
@@ -777,6 +777,16 @@ def api_c(): return jsonify(state_c)
 @app.route('/api/d')
 @login_required
 def api_d(): return jsonify(state_d)
+
+@app.route('/cm')
+@login_required
+def strategy_cm():
+    s = dict(state_cm); s['box'] = None
+    return render_dash('cm','/api/cm','te', s)
+
+@app.route('/api/cm')
+@login_required
+def api_cm(): return jsonify(state_cm)
 
 
 # ── WEBHOOKS (no login) ──────────────────────────────────────
