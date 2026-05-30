@@ -1616,7 +1616,7 @@ def finalize_trade_cm(price, result, note=""):
     state_cm["pnl_total"] = round(state_cm["pnl_total"] + pnl, 2)
     state_cm["balance"]   = round(state_cm["balance"]   + pnl, 2)
     if result == "WIN": state_cm["wins"]   += 1
-    else:               state_cm["losses"] += 1
+    elif result == "LOSS": state_cm["losses"] += 1
     trade_cm = {
         "type":       pos["type"],
         "entry":      pos["entry"],
@@ -1634,7 +1634,7 @@ def finalize_trade_cm(price, result, note=""):
     state_cm["trades"].append(trade_cm)
     db_save_trade("CM", trade_cm)
     wins = state_cm["wins"]; losses = state_cm["losses"]
-    emoji = "✅" if result == "WIN" else "❌"
+    emoji = "✅" if result == "WIN" else ("➖" if result == "BREAK EVEN" else "❌")
     send_telegram(
         f"{emoji} <b>[CM] {note or result}</b>\n"
         f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
@@ -1642,6 +1642,28 @@ def finalize_trade_cm(price, result, note=""):
         f"W/L: {wins}W/{losses}L"
     )
     state_cm["position"] = None
+    save_state_cm()
+
+
+def finalize_partial_cm(close_price, partial_qty, partial_pnl, note=""):
+    """Καταγράφει partial close (TP1 50%) — κρατάει τη θέση ανοιχτή."""
+    state_cm["balance"]   = round(state_cm["balance"]   + partial_pnl, 2)
+    state_cm["pnl_total"] = round(state_cm["pnl_total"] + partial_pnl, 2)
+    state_cm["wins"]     += 1
+    pos = state_cm["position"]
+    trade_cm = {
+        "type":   pos["type"] if pos else "",
+        "entry":  pos["entry"] if pos else 0,
+        "close":  close_price,
+        "pnl":    partial_pnl,
+        "result": "WIN",
+        "time":   datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "divergence": False,
+        "note":   note,
+    }
+    state_cm["trades"].append(trade_cm)
+    db_save_trade("CM", trade_cm)
+    log.info(f"[CM] Partial close @ {close_price:.2f} | +${partial_pnl:.2f}")
     save_state_cm()
 
 
@@ -1657,6 +1679,7 @@ def run_strategy_cm():
         "get_candles":    get_candles,
         "place_order":    place_order_paper,
         "finalize":       finalize_trade_cm,
+        "finalize_partial": finalize_partial_cm,
         "send_telegram":  send_telegram,
         "ai_validate":    _ai_validate,
         "save_state":     save_state_cm,
