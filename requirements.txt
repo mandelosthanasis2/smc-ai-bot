@@ -11,7 +11,9 @@ websocket-client==1.8.0
 requests==2.32.3
 
 # AI validator / coach (Claude)
-anthropic==0.39.0
+# Note: anthropic must be a modern release — 0.39 broke against current httpx
+# (the `proxies` kwarg was removed from httpx.Client).
+anthropic==0.69.0
 
 # Auth (password hashing)
 bcrypt==4.2.0
