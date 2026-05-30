@@ -583,9 +583,11 @@ TMPL = """<!DOCTYPE html>
     <div class="cd-hd"><div class="cd-tt">Open Position</div><span class="pi {{ 'pi-lo' if position.type=='LONG' else 'pi-sh' }}">{{ position.type }}</span></div>
     <div>
       <div class="pr"><span class="pk">Entry</span><span class="pv">${{ "{:,.2f}".format(position.entry) }}</span></div>
-      {% if position.tp is defined %}<div class="pr"><span class="pk">Take Profit</span><span class="pv tg">${{ "{:,.2f}".format(position.tp) }}</span></div>{% endif %}
-      {% if position.tp1 is defined %}<div class="pr"><span class="pk">TP1 (2:1)</span><span class="pv tg">${{ "{:,.2f}".format(position.tp1) }}</span></div><div class="pr"><span class="pk">TP2 (3:1)</span><span class="pv tte">${{ "{:,.2f}".format(position.tp2) }}</span></div>{% endif %}
-      {% if position.trailing_active %}
+      {% if position.tp is defined and position.tp1 is not defined %}<div class="pr"><span class="pk">Take Profit</span><span class="pv tg">${{ "{:,.2f}".format(position.tp) }}</span></div>{% endif %}
+      {% if position.tp1 is defined %}<div class="pr"><span class="pk">TP1{{ ' ✓' if position.phase1_done else '' }}</span><span class="pv tg">${{ "{:,.2f}".format(position.tp1) }}</span></div><div class="pr"><span class="pk">TP2</span><span class="pv tte">${{ "{:,.2f}".format(position.tp2) }}</span></div>{% endif %}
+      {% if position.phase1_done and not position.trailing_active %}
+      <div class="pr"><span class="pk" style="color:#ffc800">🔒 SL (Break Even)</span><span class="pv" style="color:#ffc800">${{ "{:,.2f}".format(position.sl) }}</span></div>
+      {% elif position.trailing_active %}
       <div class="pr"><span class="pk" style="color:#ffc800">🚀 Trailing SL</span><span class="pv" style="color:#ffc800">${{ "{:,.2f}".format(position.trailing_sl) }}</span></div>
       <div class="pr"><span class="pk">Peak Price</span><span class="pv tg">${{ "{:,.2f}".format(position.trailing_peak) }}</span></div>
       {% else %}
@@ -641,7 +643,7 @@ TMPL = """<!DOCTYPE html>
 
     <div style="margin-bottom:10px">
       <div style="color:#14b8a6;font-weight:600;margin-bottom:4px">3️⃣ THE MARK (Είσοδος)</div>
-      <div style="color:var(--t3)">Entry όταν πράσινο 5m κερί κλείνει πάνω από κόκκινο (LONG) ή το αντίστροφο (SHORT). <b>SL:</b> κάτω από το blowoff low. <b>TP1:</b> day high (conservative). <b>TP2:</b> blowoff range projection (aggressive).</div>
+      <div style="color:var(--t3)">Entry όταν πράσινο 5m κερί κλείνει πάνω από κόκκινο (LONG) ή το αντίστροφο (SHORT). <b>SL:</b> κάτω από το blowoff low. <b>TP1</b> (κοντινός στόχος): κλείνει 50% + SL→break-even. <b>TP2</b> (μακρινός στόχος): κλείνει το υπόλοιπο 50%.</div>
     </div>
 
     <div style="margin-top:12px;padding:10px;background:rgba(20,184,166,.08);border-radius:6px;border:1px solid rgba(20,184,166,.2)">
