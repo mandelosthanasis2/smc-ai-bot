@@ -1,10 +1,38 @@
-flask>=3.0.0
-anthropic>=0.25.0
-feedparser>=6.0.10
-requests>=2.31.0
-gunicorn>=21.2.0
-websocket-client>=1.7.0
-psycopg2-binary
-bcrypt>=4.0.0
-flask-login>=0.6.0
-schedule
+# ── NRM Bot — runtime dependencies ──────────────────────────────
+# Pinned to minor versions for reproducible Railway deploys.
+# Run:  pip install -r requirements.txt
+
+# Web dashboard & API
+Flask==3.0.3
+
+# Exchange connectivity
+websocket-client==1.8.0
+requests==2.32.3
+
+# AI validator / coach (Claude)
+anthropic==0.39.0
+
+# Auth (password hashing)
+bcrypt==4.2.0
+
+# News briefing feeds
+feedparser==6.0.11
+
+# PostgreSQL driver (Railway)
+psycopg2-binary==2.9.9
+
+
+# ── Build-time only (knowledge base) ────────────────────────────
+# These are needed locally to (re)build knowledge_base.json from PDFs,
+# NOT on the Railway runtime. Install on demand:
+#   pip install -r requirements-build.txt
+#
+# pdfplumber==0.11.4
+# chromadb==0.5.23
+
+
+# ── Local research / backtesting (optional) ─────────────────────
+# Used by standalone backtest scripts, not the live bot:
+#   pip install ccxt
+#
+# ccxt==4.4.0
