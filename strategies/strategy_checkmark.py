@@ -269,19 +269,20 @@ def _build_entry(check, entry_price, cfg):
     blowoff_range = abs(check["open_price"] - blowoff_level)
 
     if side == "LONG":
-        sl  = round(blowoff_level * 0.999, 2)   # κάτω από blowoff low
-        tp1 = check["day_high"]                  # conservative: day high
-        tp2 = round(entry_price + blowoff_range, 2)  # aggressive: range projection
+        sl  = round(blowoff_level * 0.999, 2)            # κάτω από blowoff low
+        target_a = check["day_high"]                     # day high (liquidity return)
+        target_b = round(entry_price + blowoff_range, 2) # blowoff range projection
+        # TP1 = κοντινός, TP2 = μακρινός (sort ώστε entry < TP1 < TP2)
+        tp1, tp2 = sorted([target_a, target_b])
     else:  # SHORT
-        sl  = round(blowoff_level * 1.001, 2)   # πάνω από blowoff high
-        tp1 = check["day_low"]                    # conservative: day low
-        tp2 = round(entry_price - blowoff_range, 2)
+        sl  = round(blowoff_level * 1.001, 2)            # πάνω από blowoff high
+        target_a = check["day_low"]
+        target_b = round(entry_price - blowoff_range, 2)
+        # TP1 = κοντινός, TP2 = μακρινός (sort ώστε entry > TP1 > TP2)
+        tp1, tp2 = sorted([target_a, target_b], reverse=True)
 
-    # Επίλεξε primary TP: το πιο μακρινό από τα δύο (aggressive default)
-    if cfg["use_tp2"]:
-        primary_tp = tp2
-    else:
-        primary_tp = tp1
+    # Primary TP = TP1 (κοντινός): εκεί κλείνει το 50% + BE
+    primary_tp = tp1
 
     return {
         "side":  side,
@@ -452,6 +453,7 @@ def _execute_entry(deps, state, entry, cm):
         "tp2":   entry["tp2"],
         "qty":   qty,
         "trailing_active": False,
+        "phase1_done":     False,
         "ai_action":     ai_action,
         "ai_confidence": ai_result.confidence if ai_result else 0,
         "ai_reasoning":  _json.dumps(ai_result.reasoning) if ai_result else "",
@@ -478,10 +480,15 @@ def _execute_entry(deps, state, entry, cm):
 # ═══════════════════════════════════════════════════════════════
 
 def _manage_position(deps, state, price):
-    """Διαχειρίζεται ανοιχτή θέση: TP, SL, trailing (floor at TP)."""
-    cfg        = CONFIG
-    finalize   = deps["finalize"]
-    save_state = deps["save_state"]
+    """
+    Διαχειρίζεται ανοιχτή θέση με 2-phase TP:
+      Phase 1: TP1 hit → κλείνει 50% + SL → break-even (entry)
+      Phase 2: TP2 hit → κλείνει υπόλοιπο 50% (WIN) | SL hit → κλείνει
+    """
+    finalize         = deps["finalize"]
+    finalize_partial = deps["finalize_partial"]
+    send_telegram    = deps["send_telegram"]
+    save_state       = deps["save_state"]
 
     pos = state["position"]
     if not pos:
@@ -490,46 +497,40 @@ def _manage_position(deps, state, price):
     is_long = pos["type"] == "LONG"
     entry   = pos["entry"]
     sl      = pos["sl"]
-    tp      = pos["tp"]
+    tp1     = pos["tp1"]
+    tp2     = pos["tp2"]
 
-    # ── Past TP → trailing (ποτέ κάτω από TP) ──
-    past_tp = (is_long and price >= tp) or (not is_long and price <= tp)
-    if past_tp:
-        if not pos.get("trailing_active"):
-            pos["trailing_active"] = True
-            pos["trailing_peak"]   = price
-            init_tsl = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
-            pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)
+    # ── Phase 1: TP1 hit → close 50%, SL → break-even ──
+    if not pos.get("phase1_done"):
+        hit_tp1 = (is_long and price >= tp1) or (not is_long and price <= tp1)
+        if hit_tp1:
+            partial_qty = round(pos["qty"] * 0.5, 6)
+            partial_pnl = round(((tp1 - entry) if is_long else (entry - tp1)) * partial_qty, 2)
+            finalize_partial(tp1, partial_qty, partial_pnl, "TP1 (50%)")
+            pos["sl"]          = entry              # break-even
+            pos["qty"]         = round(pos["qty"] - partial_qty, 6)
+            pos["phase1_done"] = True
             save_state()
-            deps["send_telegram"](
-                f"🚀 <b>[CM] TRAILING ACTIVE</b>\n"
-                f"TP reached ${tp:,.2f}\nTrailing SL: ${pos['trailing_sl']:,.2f}"
+            send_telegram(
+                f"🎯 <b>[CM] TP1 HIT (50%)</b>\n"
+                f"Close: ${tp1:,.2f} | PnL: +${partial_pnl:.2f}\n"
+                f"SL → Break Even | Target TP2: ${tp2:,.2f}"
             )
             return
 
-        peak = pos.get("trailing_peak", price)
-        if is_long:
-            if price > peak:
-                pos["trailing_peak"] = price
-                new_tsl = round(price * (1 - 0.003), 2)
-                pos["trailing_sl"] = max(new_tsl, tp)
-                save_state()
-            if price <= pos["trailing_sl"]:
-                finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
-                return
-        else:
-            if price < peak:
-                pos["trailing_peak"] = price
-                new_tsl = round(price * (1 + 0.003), 2)
-                pos["trailing_sl"] = min(new_tsl, tp)
-                save_state()
-            if price >= pos["trailing_sl"]:
-                finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
-                return
-        return
+    # ── Phase 2: TP2 hit → close remainder | SL hit → close ──
+    hit_tp2 = (is_long and price >= tp2) or (not is_long and price <= tp2)
+    hit_sl  = (is_long and price <= sl)  or (not is_long and price >= sl)
 
-    # ── Normal SL ──
-    hit_sl = (is_long and price <= sl) or (not is_long and price >= sl)
+    if hit_tp2:
+        finalize(tp2, "WIN", "TP2")
+        return
     if hit_sl:
-        finalize(price, "LOSS", f"STOP LOSS @ ${price:,.2f}")
+        actual_pnl = ((sl - entry) if is_long else (entry - sl)) * pos["qty"]
+        if abs(actual_pnl) < 1.0:
+            finalize(sl, "BREAK EVEN", "BREAK EVEN")
+        elif actual_pnl > 0:
+            finalize(sl, "WIN", "STOP LOSS (profit)")
+        else:
+            finalize(sl, "LOSS", "STOP LOSS")
         return
