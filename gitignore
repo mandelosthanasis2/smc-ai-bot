@@ -1,0 +1,53 @@
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ── Virtual environments ────────────────────────────────
+venv/
+.venv/
+env/
+.env
+.env.*
+
+# ── Secrets & credentials ───────────────────────────────
+# Never commit API keys, exchange secrets, or tokens.
+*.key
+*.pem
+secrets.json
+credentials.json
+
+# ── Runtime state (regenerated at startup) ──────────────
+# Paper-trading state is persisted to the DB; local JSON is a fallback
+# cache and should not be versioned.
+bot_state*.json
+*.local.json
+
+# ── Knowledge base build artifacts ──────────────────────
+# The committed knowledge_base.json is the deploy artifact; the raw
+# ChromaDB and source PDFs stay local.
+chroma_db/
+knowledge/
+*.pdf
+
+# ── Logs & databases ────────────────────────────────────
+*.log
+*.sqlite
+*.db
+
+# ── Testing & coverage ──────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── Editors / OS ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
