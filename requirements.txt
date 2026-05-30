@@ -19,6 +19,9 @@ bcrypt==4.2.0
 # News briefing feeds
 feedparser==6.0.11
 
+# Scheduled briefings (analysis_agent)
+schedule==1.2.2
+
 # PostgreSQL driver (Railway)
 psycopg2-binary==2.9.9
 
