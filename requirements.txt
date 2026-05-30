@@ -4,6 +4,7 @@
 
 # Web dashboard & API
 Flask==3.0.3
+gunicorn==23.0.0
 
 # Exchange connectivity
 websocket-client==1.8.0
