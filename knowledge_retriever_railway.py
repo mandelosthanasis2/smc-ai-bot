@@ -159,15 +159,20 @@ def get_context_for_trade(strategy, side, entry, stop_loss, take_profit):
     """
     Context ειδικά για ένα trade signal — στοχευμένο ανά στρατηγική.
 
-    Strategy A/B/C: Box + RSI → ψάχνει RSI rules, S/R, risk management
-    Strategy D: OB + FVG + CHoCH → ψάχνει ICT/SMC concepts
+    RSI group (A/B/C): Box + RSI → RSI rules, S/R, risk management
+    ICT/SMC group (CM/SMC): OB + FVG + CHoCH → ICT/SMC concepts
+    Default (άγνωστη στρατηγική): ICT/SMC (πιο γενικό για price-action setups)
     """
     _load()
     if not _chunks:
         return ""
 
-    if strategy in ("A", "B", "C"):
-        # Box + RSI strategies — ψάχνε για γενικά trading rules
+    # Ρητή ομαδοποίηση στρατηγικών (αντί για "ό,τι περισσέψει")
+    RSI_STRATEGIES     = ("A", "B", "C")
+    ICTSMC_STRATEGIES  = ("CM", "SMC")
+
+    if strategy in RSI_STRATEGIES:
+        # Box + RSI strategies — γενικά trading rules
         queries = [
             (f"RSI overbought oversold {side} signal confirmation", None),
             ("support resistance level key price rejection", "technical"),
@@ -175,7 +180,7 @@ def get_context_for_trade(strategy, side, entry, stop_loss, take_profit):
             ("candlestick pattern confirmation entry signal", "candlesticks"),
             ("swing trading trend following momentum", "swing_trading"),
         ]
-    else:  # Strategy D — ICT/SMC
+    else:  # ICT/SMC strategies (CM, SMC) + default fallback
         queries = [
             (f"order block {side} entry confirmation", "smc_ict"),
             ("fair value gap FVG imbalance fill", "smc_ict"),
