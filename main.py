@@ -647,7 +647,37 @@ TMPL = """<!DOCTYPE html>
     </div>
 
     <div style="margin-top:12px;padding:10px;background:rgba(20,184,166,.08);border-radius:6px;border:1px solid rgba(20,184,166,.2)">
-      <div style="font-size:11px;color:var(--t3)">⚙️ <b style="color:var(--t1)">Ρυθμίσεις:</b> Σκαν @ 13:30 UTC · ATR threshold 20% · Pivot 2+ tests · Risk 2% · Trailing stop ενεργό (ποτέ κάτω από TP)</div>
+      <div style="font-size:11px;color:var(--t3)">⚙️ <b style="color:var(--t1)">Ρυθμίσεις:</b> Σκαν @ 13:30 UTC · ATR threshold 20% · Pivot 2+ tests · Risk 2% · 2-phase exit (TP1 50% + break-even → TP2)</div>
+    </div>
+
+    <div style="margin-top:8px;font-size:10px;color:var(--t3)">Μετά το entry, περνά από τον AI Validator (trend, OB, FVG, volume, news, knowledge base) για την τελική απόφαση GO/SKIP/DOUBLE/REDUCE.</div>
+  </div>
+</div>
+{% endif %}
+
+{% if strategy_id == 'SMC' %}
+<div class="cd" style="margin-top:10px">
+  <div class="cd-hd"><div class="cd-tt">📖 Πώς δουλεύει η SMC</div></div>
+  <div class="cd-bd" style="padding:16px;font-size:12px;line-height:1.7;color:var(--t2)">
+    <p style="margin-bottom:12px">Στρατηγική <b style="color:var(--t1)">Smart Money Concepts</b> (OB + FVG + CHoCH). Τα signals έρχονται από το <b>TradingView webhook</b> — το Pine script εντοπίζει το setup και στέλνει entry/SL/TP στο bot.</p>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#f5c518;font-weight:600;margin-bottom:4px">1️⃣ ORDER BLOCK + FVG</div>
+      <div style="color:var(--t3)">Εντοπίζει <b>Order Block</b> (η τελευταία κερί πριν από impulsive move) σε confluence με <b>Fair Value Gap</b> (imbalance/κενό στην τιμή που τείνει να γεμίσει).</div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#f5c518;font-weight:600;margin-bottom:4px">2️⃣ CHoCH (Change of Character)</div>
+      <div style="color:var(--t3)">Επιβεβαίωση αλλαγής δομής: η τιμή σπάει το προηγούμενο swing high/low, σηματοδοτώντας πιθανή αντιστροφή τάσης προς την κατεύθυνση του trade.</div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="color:#f5c518;font-weight:600;margin-bottom:4px">3️⃣ ENTRY + 2-PHASE EXIT</div>
+      <div style="color:var(--t3)">Entry στη ζώνη confluence (OB+FVG). <b>SL:</b> πέρα από το Order Block. <b>TP1</b> (κοντινός): κλείνει 50% + SL→break-even. <b>TP2</b> (μακρινός): κλείνει το υπόλοιπο 50%. <b>Strong confluence</b> → διπλάσιο μέγεθος θέσης.</div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px;background:rgba(245,197,24,.08);border-radius:6px;border:1px solid rgba(245,197,24,.2)">
+      <div style="font-size:11px;color:var(--t3)">⚙️ <b style="color:var(--t1)">Ρυθμίσεις:</b> TradingView webhook · Risk 2% (×2 strong confluence) · 2-phase exit (TP1 50% + break-even → TP2) · Dedup 30s</div>
     </div>
 
     <div style="margin-top:8px;font-size:10px;color:var(--t3)">Μετά το entry, περνά από τον AI Validator (trend, OB, FVG, volume, news, knowledge base) για την τελική απόφαση GO/SKIP/DOUBLE/REDUCE.</div>
