@@ -917,8 +917,8 @@ state_d = load_state_d()
 state_cm = load_state_cm()
 state_smc = load_state_smc()
 
-# Race condition guards — αποτρέπουν διπλό AI call όταν το scheduler τρέχει κάθε 30s
-_b_entering = False
+# Race condition guard — αποτρέπει διπλό AI call όταν το scheduler τρέχει κάθε 30s.
+# (Το _b_entering μετακινήθηκε στο strategies/strategy_b.py ως module-level guard.)
 _a_entering = False
 
 # =================================================================
@@ -1055,76 +1055,8 @@ def finalize_trade_b(price, result, note=""):
     state_b["position"] = None
     save_state_b()
 
-def check_position_b(price):
-    pos = state_b["position"]
-    if not pos: return
-
-    if os.environ.get("FORCE_CLOSE_B","").lower() == "true":
-        finalize_trade_b(price, "WIN" if price>pos["entry"] else "LOSS", "FORCE CLOSE")
-        return
-
-    entry   = pos["entry"]
-    tp      = pos["tp"]
-    is_long = pos["type"] == "LONG"
-    tp_dist = abs(tp-entry)
-
-    # Phase 1: 50% → Break Even
-    if tp_dist>0 and not pos.get("phase1_done"):
-        progress = ((price-entry)/tp_dist) if is_long else ((entry-price)/tp_dist)
-        if progress >= 0.50:
-            pos["sl"] = entry; pos["phase1_done"] = True
-            log.info(f"[B] Phase 1: SL -> entry @ {entry:.2f}")
-            send_telegram(f"🔒 <b>[B] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
-            save_state_b()
-
-    # Phase 2: TP hit → ενεργοποίηση trailing stop 0.3% (αν enabled)
-    hit_tp = (is_long and price>=tp) or (not is_long and price<=tp)
-    if hit_tp and not pos.get("trailing_active"):
-        if not state_b.get("trailing_enabled", True):
-            finalize_trade_b(tp, "WIN", "TAKE PROFIT")
-            return
-        pos["trailing_active"] = True
-        init_tsl = round(price * (1 - 0.003), 2) if is_long else round(price * (1 + 0.003), 2)
-        pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
-        pos["trailing_peak"] = price
-        log.info(f"[B] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
-        send_telegram(f"🚀 <b>[B] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
-        save_state_b()
-        return
-
-    # Phase 2 active: ενημέρωση trailing SL
-    if pos.get("trailing_active"):
-        peak = pos.get("trailing_peak", price)
-        if is_long:
-            if price > peak:
-                pos["trailing_peak"] = price
-                new_tsl = round(price * (1 - 0.003), 2)
-                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
-                save_state_b()
-            if price <= pos["trailing_sl"]:
-                finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
-                return
-        else:
-            if price < peak:
-                pos["trailing_peak"] = price
-                new_tsl = round(price * (1 + 0.003), 2)
-                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
-                save_state_b()
-            if price >= pos["trailing_sl"]:
-                finalize_trade_b(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
-                return
-        return
-
-    hit_sl = (is_long and price<=pos["sl"]) or (not is_long and price>=pos["sl"])
-    if hit_sl:
-        actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
-        if abs(actual_pnl) < 1.0:
-            result = "BREAK EVEN"; note = "BREAK EVEN"
-        elif actual_pnl > 0:
-            result = "WIN"; note = "STOP LOSS (profit)"
-        else:
-            result = "LOSS"; note = "STOP LOSS"
-        finalize_trade_b(pos["sl"], result, note)
+# check_position_b μετακινήθηκε στο strategies/strategy_b.py (Phase 2 refactor).
+# Καλείται εσωτερικά από το strategy_b.on_tick μέσω deps["finalize"]/deps[...].
 
 # =================================================================
 # STRATEGY A - Daily box + 1H RSI
@@ -1270,123 +1202,27 @@ def check_position_c(price):
 # =================================================================
 
 def run_strategy_b():
-    price   = rt.price
-    rsi_15m = rt.rsi_15m
-
-    state_b["current_rsi"]   = rsi_15m
-    state_b["current_price"] = price  # needed for dashboard unrealised PnL
-
-    if price<=0 or not rt.initialized:
-        state_b["last_signal"] = "Initializing..."
-        return
-
-    if state_b["position"]:
-        check_position_b(price)
-        if state_b["position"]:
-            pos = state_b["position"]
-            pnl = ((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"]
-            state_b["last_signal"] = f"HOLDING {pos['type']} @ {pos['entry']:.2f} | PnL: {pnl:+.2f}"
-            return
-
-    candles_1h = get_candles("1H", 50)
-    if not candles_1h:
-        state_b["last_signal"] = "No candle data"
-        return
-
-    box = build_1h_box(candles_1h)
-    if not box: return
-    state_b["box"] = box
-
-    candles_15m = get_candles("15m", 100)
-    if candles_15m:
-        h15 = [c["high"] for c in candles_15m]
-        l15 = [c["low"]  for c in candles_15m]
-        with rt.lock: c15 = list(rt.closes_15m)
-        bull_div, bear_div = detect_divergence(c15, h15[-20:], l15[-20:])
-    else:
-        bull_div = bear_div = False
-    state_b["last_divergence"] = bull_div or bear_div
-
-    balance = state_b["balance"]
-    log.info(f"[B] Price={price:.2f} RSI15m={rsi_15m} 1H=[{box['low']:.0f}-{box['high']:.0f}]")
-
-    # SHORT at 1H High
-    global _b_entering
-    if _b_entering: return  # Race condition guard
-    at_high = (price>=box["high"]*0.995) and (price<=box["high"]*1.015)
-    if at_high and rsi_15m>70 and box["mid"]<price:
-        tp_dist = price - box["mid"]
-        sl_dist = tp_dist/2
-        tp=box["mid"]; sl=round(price+sl_dist, 2)
-        risk_pct = RISK_PER_TRADE*2 if bear_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        # ── AI Validator ──────────────────────────────────────
-        _b_entering = True
-        ai_action, ai_mult, _ai_result = _ai_validate(
-            strategy="B", side="SHORT",
-            entry_price=price, stop_loss=sl, take_profit=tp,
-            rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
-            box=box, has_divergence=bear_div,
-            trades=state_b.get("trades",[]), balance=balance,
-            candles_15m=candles_15m or get_candles("15m", 30),
-        )
-        if ai_action == "SKIP": _b_entering = False; return
-        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
-        # ─────────────────────────────────────────────────────
-        order_id = place_order_paper("SHORT",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("SHORT",qty,sl,tp)
-        if order_id:
-            state_b["position"]={"type":"SHORT","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bear_div,
-                                   "ai_action":ai_action,"ai_shadow":AI_SHADOW_MASTER,
-                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
-                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
-            _send_ai_trade_summary("B","SHORT",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
-            state_b["last_signal"]="SHORT"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state_b()
-            send_telegram(f"🔴 <b>[B] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bear_div else ''}")
-        _b_entering = False
-        return
-
-    # LONG at 1H Low
-    at_low = (price<=box["low"]*1.005) and (price>=box["low"]*0.985)
-    if at_low and rsi_15m<30 and box["mid"]>price:
-        tp_dist = box["mid"] - price
-        sl_dist = tp_dist/2
-        tp=box["mid"]; sl=round(price-sl_dist, 2)
-        risk_pct = RISK_PER_TRADE*2 if bull_div else RISK_PER_TRADE
-        qty      = calc_qty(balance, risk_pct, price, sl)
-        # ── AI Validator ──────────────────────────────────────
-        _b_entering = True
-        ai_action, ai_mult, _ai_result = _ai_validate(
-            strategy="B", side="LONG",
-            entry_price=price, stop_loss=sl, take_profit=tp,
-            rsi_15m=rsi_15m, rsi_1h=rt.rsi_1h,
-            box=box, has_divergence=bull_div,
-            trades=state_b.get("trades",[]), balance=balance,
-            candles_15m=candles_15m or get_candles("15m", 30),
-        )
-        if ai_action == "SKIP": _b_entering = False; return
-        if ai_action in ("REDUCE_SIZE","DOUBLE_SIZE"): qty = round(qty * ai_mult, 4)
-        # ─────────────────────────────────────────────────────
-        order_id = place_order_paper("LONG",qty,price,sl,tp) if TRADING_MODE=="PAPER" else place_order_live("LONG",qty,sl,tp)
-        if order_id:
-            state_b["position"]={"type":"LONG","entry":price,"sl":sl,"tp":tp,"qty":qty,
-                                   "time":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id":order_id,"has_divergence":bull_div,
-                                   "ai_action":ai_action,"ai_shadow":AI_SHADOW_MASTER,
-                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
-                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
-            _send_ai_trade_summary("B","LONG",price,sl,tp,ai_action,_ai_result,AI_SHADOW_MASTER)
-            state_b["last_signal"]="LONG"; state_b["last_signal_time"]=datetime.now(timezone.utc).strftime("%H:%M UTC")
-            save_state_b()
-            send_telegram(f"🟢 <b>[B] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bull_div else ''}")
-        _b_entering = False
-        return
-
-    div_txt = "Div!" if (bull_div or bear_div) else "No div"
-    state_b["last_signal"] = f"WAIT | RSI={rsi_15m} | [{box['low']:.0f}-{box['high']:.0f}] | {div_txt}"
-    log.info(f"[B] {state_b['last_signal']}")
+    """Strategy B (1H Box + 15m RSI) — καλεί το αυτόνομο module."""
+    from strategies import strategy_b
+    price = rt.price
+    deps = {
+        "rt":                rt,
+        "get_candles":       get_candles,
+        "build_1h_box":      build_1h_box,
+        "detect_divergence": detect_divergence,
+        "calc_qty":          calc_qty,
+        "place_order":       place_order_paper,
+        "place_order_live":  place_order_live,
+        "send_telegram":     send_telegram,
+        "ai_validate":       _ai_validate,
+        "finalize":          finalize_trade_b,
+        "save_state":        save_state_b,
+        "send_ai_summary":   _send_ai_trade_summary,
+        "trading_mode":      TRADING_MODE,
+        "risk_per_trade":    RISK_PER_TRADE,
+        "ai_shadow_master":  AI_SHADOW_MASTER,
+    }
+    strategy_b.on_tick(deps, state_b, price)
 
 # =================================================================
 # POSITION MANAGEMENT - Strategy D (OB + FVG + CHoCH, webhook only)
