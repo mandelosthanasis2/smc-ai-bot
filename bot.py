@@ -30,6 +30,12 @@ AI_SHADOW_MASTER     = os.environ.get("AI_SHADOW_MODE", "true").lower() == "true
 AI_VALIDATOR_ENABLED = AI_VALIDATOR_MASTER
 AI_SHADOW_MODE       = AI_SHADOW_MASTER
 
+# ── Operational constants (named, ώστε να μη μένουν "magic numbers") ──
+MIN_ORDER_QTY           = 0.001  # ελάχιστο μέγεθος θέσης (BTC)
+ERROR_HISTORY_LIMIT     = 10     # πόσα πρόσφατα σφάλματα κρατάμε ανά στρατηγική
+DEFAULT_CYCLE_SECONDS   = 60     # default περίοδος σάρωσης Strategy A (env CYCLE_SECONDS)
+SCHEDULER_SLEEP_SECONDS = 30     # ύπνος μεταξύ κύκλων του scheduler loop
+
 def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
                  rsi_15m, rsi_1h, box, has_divergence, trades, balance,
                  initial_balance=10000.0, candles_4h=None, extra=None,
@@ -1028,8 +1034,8 @@ def get_balance_a():
 
 def calc_qty(balance, risk_pct, entry, sl):
     risk_dist = abs(entry - sl)
-    if risk_dist <= 0: return 0.001
-    return max(round((balance * risk_pct) / risk_dist, 4), 0.001)
+    if risk_dist <= 0: return MIN_ORDER_QTY
+    return max(round((balance * risk_pct) / risk_dist, 4), MIN_ORDER_QTY)
 
 def finalize_trade_a(price, result, note=""):
     pos = state["position"]
@@ -1490,7 +1496,7 @@ def check_position_d(price):
 
 def bot_loop():
     log.info("=" * 45)
-    log.info("  SMC AI BOT v3 - Real-time WebSocket RSI")
+    log.info("  NRM Bot - Real-time WebSocket RSI")
     log.info(f"  Mode: {TRADING_MODE} | Leverage: {LEVERAGE}x")
     log.info(f"  Balance A: ${state['balance']:.2f} W{state['wins']}/L{state['losses']}")
     log.info(f"  Balance B: ${state_b['balance']:.2f}")
@@ -1504,7 +1510,7 @@ def bot_loop():
     time.sleep(5)
 
     send_telegram(
-        f"⚡ <b>SMC AI Bot v3 Started</b>\n"
+        f"⚡ <b>NRM Bot Started</b>\n"
         f"Mode: {TRADING_MODE}\n"
         f"Balance A: ${state['balance']:.2f} | W{state['wins']}/L{state['losses']}\n"
         f"Balance B: ${state_b['balance']:.2f}\n"
@@ -1521,7 +1527,7 @@ def bot_loop():
             now    = datetime.now(timezone.utc)
             now_ts = now.timestamp()
             now_str = now.strftime("%Y-%m-%d %H:%M UTC")
-            cycle_a = int(os.environ.get("CYCLE_SECONDS", "60"))
+            cycle_a = int(os.environ.get("CYCLE_SECONDS", str(DEFAULT_CYCLE_SECONDS)))
 
             # Strategy A every 60s
             if now_ts - last_run_a >= cycle_a:
@@ -1532,7 +1538,7 @@ def bot_loop():
                     log.error(f"Strategy A error: {e}")
                     with state_lock:
                         state["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                        state["errors"] = state["errors"][-10:]
+                        state["errors"] = state["errors"][-ERROR_HISTORY_LIMIT:]
                 save_state()
                 last_run_a = now_ts
 
@@ -1544,7 +1550,7 @@ def bot_loop():
                 log.error(f"Strategy B error: {e}")
                 with state_lock_b:
                     state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                    state_b["errors"] = state_b["errors"][-10:]
+                    state_b["errors"] = state_b["errors"][-ERROR_HISTORY_LIMIT:]
             save_state_b()
 
             # Strategy CM (Check Mark) every 30s
@@ -1555,7 +1561,7 @@ def bot_loop():
                 log.error(f"Strategy CM error: {e}")
                 with state_lock_cm:
                     state_cm["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                    state_cm["errors"] = state_cm["errors"][-10:]
+                    state_cm["errors"] = state_cm["errors"][-ERROR_HISTORY_LIMIT:]
             save_state_cm()
 
             # Strategy C: check open position every 30s (entries via webhook only)
@@ -1592,7 +1598,7 @@ def bot_loop():
         except Exception as e:  # broad on purpose: scheduler loop must never crash
             log.error(f"Main loop error: {e}")
 
-        time.sleep(30)
+        time.sleep(SCHEDULER_SLEEP_SECONDS)
 
 
 bot_thread = threading.Thread(target=bot_loop, daemon=True)
