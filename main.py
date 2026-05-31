@@ -288,9 +288,8 @@ bot_thread.start()
 # Race condition guards — αποθηκεύουν timestamp τελευταίου signal
 # Αν το ίδιο signal φτάσει μέσα σε 30s, αγνοείται
 import time as _time
-_c_last_signal_time = 0.0
+# (Το C dedup μετακινήθηκε στο strategies/strategy_c.py ως module-level guard.)
 _d_last_signal_time = 0.0
-_C_DEDUP_SECONDS = 30
 _D_DEDUP_SECONDS = 30
 
 # ── Start analysis agent scheduler (briefings at 08:00, 13:00, 20:00 Athens) ──
@@ -981,57 +980,37 @@ def _wh_a(sig, price=None, data=None):
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[A] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
 def _wh_c(sig, price=None, data=None):
-    global _c_last_signal_time
+    """Strategy C webhook → delegate στο αυτόνομο strategies/strategy_c.py module."""
     import os as _os
-    from bot import rt,state_c,save_state_c,send_telegram,calc_qty,place_order_paper,place_order_live,get_candles,build_1h_box,TRADING_MODE,RISK_PER_TRADE
-    # Per-strategy trading mode — TRADING_MODE_C override αν υπάρχει
+    from bot import (rt, state_c, save_state_c, send_telegram, calc_qty,
+                     place_order_paper, place_order_live, get_candles, build_1h_box,
+                     _ai_validate, _send_ai_trade_summary, TRADING_MODE, RISK_PER_TRADE,
+                     AI_SHADOW_MASTER)
+    from strategies import strategy_c
+
+    # Per-strategy overrides — TRADING_MODE_C / RISK_PER_TRADE_C αν υπάρχουν
     _TRADING_MODE_C = _os.environ.get("TRADING_MODE_C", TRADING_MODE).upper()
     _RISK_C = float(_os.environ.get("RISK_PER_TRADE_C", str(RISK_PER_TRADE)))
-    from datetime import datetime,timezone
-    if data is None: data={}
-    p=price or rt.price
-    now = _time.time()
-    if p<=0 or state_c.get('position'): return
-    if now - _c_last_signal_time < _C_DEDUP_SECONDS:
-        log.info(f"[C] Duplicate signal ignored (last={now-_c_last_signal_time:.1f}s ago)")
-        return
-    _c_last_signal_time = now
-    tp=float(data.get('tp',0)); sl=float(data.get('sl',0))
-    if not tp or not sl:
-        cn=get_candles('1H',50)
-        if not cn: return
-        bx=build_1h_box(cn)
-        if not bx: return
-        if sig=='SHORT': tp=bx['mid']; sl=round(p+(p-bx['mid'])/2,2)
-        else: tp=bx['mid']; sl=round(p-(bx['mid']-p)/2,2)
-    else: tp=round(tp,2); sl=round(sl,2)
-    if sig=='SHORT' and (tp>=p or sl<=p): return
-    if sig=='LONG'  and (tp<=p or sl>=p): return
-    qty=calc_qty(state_c.get('balance',10000),_RISK_C,p,sl)
-    # ── AI Validator ──────────────────────────────────────────────
-    from bot import _ai_validate, rt as _rt, AI_SHADOW_MASTER
-    _ai_act,_ai_mult,_ai_res = _ai_validate(
-        strategy="C", side=sig,
-        entry_price=p, stop_loss=sl, take_profit=tp,
-        rsi_15m=_rt.rsi_15m, rsi_1h=_rt.rsi_1h,
-        box=state_c.get("box"), has_divergence=False,
-        trades=state_c.get("trades",[]), balance=state_c.get("balance",10000),
-        candles_15m=__import__("bot").get_candles("15m", 30),
-    )
-    if _ai_act == "SKIP": return
-    if _ai_act in ("REDUCE_SIZE","DOUBLE_SIZE"): qty=round(qty*_ai_mult,4)
-    # ─────────────────────────────────────────────────────────────
-    oid=place_order_paper(sig,qty,p,sl,tp) if _TRADING_MODE_C=='PAPER' else place_order_live(sig,qty,sl,tp)
-    if oid:
-        import json as _json
-        state_c['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
-                            'ai_confidence': (_ai_res.confidence if _ai_res else 0),
-                            'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
-        state_c['last_signal']=sig; state_c['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
-        save_state_c()
-        send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[C] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
-        from bot import _send_ai_trade_summary
-        _send_ai_trade_summary("C", sig, p, sl, tp, _ai_act, _ai_res, AI_SHADOW_MASTER)
+
+    def _place(side, qty, entry, sl, tp):
+        return (place_order_paper(side, qty, entry, sl, tp) if _TRADING_MODE_C == 'PAPER'
+                else place_order_live(side, qty, sl, tp))
+
+    deps = {
+        "get_price":        lambda: rt.price,
+        "calc_qty":         calc_qty,
+        "place_order":      _place,
+        "send_telegram":    send_telegram,
+        "ai_validate":      _ai_validate,
+        "save_state":       save_state_c,
+        "send_ai_summary":  _send_ai_trade_summary,
+        "get_candles":      get_candles,
+        "build_1h_box":     build_1h_box,
+        "rt":               rt,
+        "risk_pct":         _RISK_C,
+        "ai_shadow_master": AI_SHADOW_MASTER,
+    }
+    strategy_c.process_webhook(deps, state_c, sig, price, data)
 
 
 def _reset_trades_db(strategy: str):
