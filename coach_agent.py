@@ -77,7 +77,7 @@ def chat(user_message: str, session_id: str = "default") -> str:
         client = anthropic.Anthropic(api_key=api_key)
         resp   = client.messages.create(
             model      = "claude-haiku-4-5-20251001",
-            max_tokens = 1000,
+            max_tokens = 4096,
             system     = system,
             messages   = recent,
         )
