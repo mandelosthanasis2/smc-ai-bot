@@ -48,10 +48,12 @@ _NULL = contextlib.nullcontext()
 # Named constants για τα magic numbers του exit model. Οι τιμές είναι
 # ΠΑΝΟΜΟΙΟΤΥΠΕΣ με την αρχική check_position_a — μόνο ονοματοδοσία.
 CONFIG = {
-    "trailing_distance": 0.003,  # 0.3% trailing stop distance
-    "phase1_progress":   0.50,   # 50% προς TP → break-even
-    "phase2_progress":   0.70,   # 70% προς TP → partial close
-    "phase2_close_pct":  0.30,   # ποσοστό θέσης που κλείνει στο Phase 2
+    "trailing_distance":    0.003,  # 0.3% trailing stop distance
+    "phase1_progress":      0.50,   # 50% προς TP → break-even
+    "phase2_progress":      0.70,   # 70% προς TP → partial close
+    "phase2_close_pct":     0.30,   # ποσοστό θέσης που κλείνει στο Phase 2
+    "sl_buffer_resistance": 1.003,  # SHORT SL = resistance × this (buffer πάνω από το R)
+    "sl_buffer_support":    0.997,  # LONG  SL = support × this (buffer κάτω από το S)
 }
 
 
@@ -246,7 +248,7 @@ def on_tick(deps, state, price):
     # SHORT at PDH
     at_pdh = (price >= box["high"] * 0.995) and (price <= box["high"] * 1.015)
     if at_pdh and rsi > 70 and box["mid"] < price:
-        sl = round(resistance * 1.003, 2)
+        sl = round(resistance * CONFIG["sl_buffer_resistance"], 2)
         tp = box["mid"]
         if tp >= price: tp = round(price * 0.99, 2)
         if sl <= price: sl = round(price * 1.01, 2)
@@ -287,7 +289,7 @@ def on_tick(deps, state, price):
     # LONG at PDL
     at_pdl = (price <= box["low"] * 1.005) and (price >= box["low"] * 0.985)
     if at_pdl and rsi < 30 and box["mid"] > price:
-        sl = round(support * 0.997, 2)
+        sl = round(support * CONFIG["sl_buffer_support"], 2)
         tp = box["mid"]
         if tp <= price: tp = round(price * 1.01, 2)
         if sl >= price: sl = round(price * 0.99, 2)

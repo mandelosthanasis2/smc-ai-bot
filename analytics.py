@@ -1,5 +1,5 @@
 """
-analytics.py — Analytics dashboard για SMC AI Bot
+analytics.py — Analytics dashboard για NRM Bot
 Προσθήκη νέας στρατηγικής: μόνο 1 γραμμή στο STRATEGIES dict
 """
 
@@ -382,7 +382,7 @@ ANALYTICS_HTML = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMC AI Bot — Analytics</title>
+<title>NRM Bot — Analytics</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap');
@@ -546,7 +546,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',mo
 <body>
 
 <nav class="nav">
-  <div class="nav-logo">SMC <span>AI</span></div>
+  <div class="nav-logo">NRM <span>Bot</span></div>
   <div class="nav-links">
     <a href="/" class="nav-link">Dashboard A</a>
     <a href="/b" class="nav-link">Dashboard B</a>
