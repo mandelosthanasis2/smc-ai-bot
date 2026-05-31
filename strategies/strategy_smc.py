@@ -24,12 +24,16 @@ Exit model: 2-phase TP (ίδιο με την παλιά D)
 Τα dependencies περνιούνται μέσω του deps dict.
 """
 
+import contextlib
 import json as _json
 import logging
 import time as _time
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+# deps["lock"] = per-strategy RLock (live). Στα tests (χωρίς lock) → nullcontext.
+_NULL = contextlib.nullcontext()
 
 # ── Configuration ─────────────────────────────────────────────
 CONFIG = {
@@ -104,6 +108,7 @@ def process_webhook(deps, state, signal, price=None, data=None):
     ai_validate   = deps.get("ai_validate")
     trading_mode  = deps.get("trading_mode", "PAPER")
     rt            = deps.get("rt")
+    lock          = deps.get("lock") or _NULL
 
     p = price or get_price()
 
@@ -155,24 +160,25 @@ def process_webhook(deps, state, signal, price=None, data=None):
         return
 
     ai_shadow = getattr(ai_result, "source", "") == "ai_agents"
-    state["position"] = {
-        "type":          signal,
-        "entry":         p,
-        "sl":            sl,
-        "tp1":           tp1,
-        "tp2":           tp2,
-        "qty":           qty,
-        "time":          datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "order_id":      oid,
-        "has_confluence": confluence_strong,
-        "phase1_done":   False,
-        "ai_action":     ai_action,
-        "ai_confidence": ai_result.confidence if ai_result else 0,
-        "ai_reasoning":  _json.dumps(ai_result.reasoning) if ai_result and ai_result.reasoning else "",
-        "ai_shadow":     ai_shadow,
-    }
-    state["last_signal"]      = signal
-    state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    with lock:
+        state["position"] = {
+            "type":          signal,
+            "entry":         p,
+            "sl":            sl,
+            "tp1":           tp1,
+            "tp2":           tp2,
+            "qty":           qty,
+            "time":          datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "order_id":      oid,
+            "has_confluence": confluence_strong,
+            "phase1_done":   False,
+            "ai_action":     ai_action,
+            "ai_confidence": ai_result.confidence if ai_result else 0,
+            "ai_reasoning":  _json.dumps(ai_result.reasoning) if ai_result and ai_result.reasoning else "",
+            "ai_shadow":     ai_shadow,
+        }
+        state["last_signal"]      = signal
+        state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
     save_state()
 
     send_telegram(
@@ -201,6 +207,7 @@ def check_position(deps, state, price):
     finalize_partial = deps["finalize_partial"]
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
+    lock          = deps.get("lock") or _NULL
 
     pos = state.get("position")
     if not pos:
@@ -221,9 +228,10 @@ def check_position(deps, state, price):
             # Καταγραφή partial μέσω του finalize_partial (κρατάει θέση ανοιχτή)
             finalize_partial(tp1, partial_qty, partial_pnl, "TP1 (50%)")
             # Move SL → entry, reduce qty
-            pos["sl"]          = entry
-            pos["qty"]         = round(pos["qty"] - partial_qty, 6)
-            pos["phase1_done"] = True
+            with lock:
+                pos["sl"]          = entry
+                pos["qty"]         = round(pos["qty"] - partial_qty, 6)
+                pos["phase1_done"] = True
             save_state()
             send_telegram(
                 f"🎯 <b>[SMC] TP1 HIT (50%)</b>\n"

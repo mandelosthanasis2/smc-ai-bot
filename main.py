@@ -7,6 +7,7 @@ import os
 import threading
 from flask import Flask, render_template_string, jsonify, session
 from bot import state, state_b, state_c, state_d, state_cm, state_smc, bot_thread
+from bot import snapshot_state, state_lock, state_lock_b, state_lock_c, state_lock_d, state_lock_smc
 from config import PORT
 from analytics import analytics_bp
 from auth import auth_bp, login_required
@@ -799,36 +800,37 @@ def render_dash(active, api_url, sc, s, extra={}):
 @app.route('/')
 @login_required
 def index():
-    return render_dash('a','/api','bl', state, {
-        'ns': state.get('last_news_score',0),
-        'nsm': state.get('last_news_summary',''),
-        'hl': state.get('last_news_headlines',[]),
+    s = snapshot_state('A')
+    return render_dash('a','/api','bl', s, {
+        'ns': s.get('last_news_score',0),
+        'nsm': s.get('last_news_summary',''),
+        'hl': s.get('last_news_headlines',[]),
     })
 
 @app.route('/b')
 @login_required
 def strategy_b():
-    s = dict(state_b); s['current_price'] = state.get('current_price',0)
+    s = snapshot_state('B'); s['current_price'] = snapshot_state('A').get('current_price',0)
     return render_dash('b','/api/b','pu', s)
 
 @app.route('/c')
 @login_required
 def strategy_c():
-    return render_dash('c','/api/c','or', state_c)
+    return render_dash('c','/api/c','or', snapshot_state('C'))
 
 @app.route('/d')
 @login_required
 def strategy_d():
-    s = dict(state_d); s['box'] = None
+    s = snapshot_state('D'); s['box'] = None
     return render_dash('d','/api/d','te', s)
 
 @app.route('/api')
 @login_required
 def api():
     from bot import rt
-    data = dict(state)
+    data = snapshot_state('A')
     # Προσθήκη live price/RSI για το analysis_agent.py
-    _state = state or {}
+    _state = data
     data["price"]    = rt.price if rt.price > 0 else _state.get("current_price", 0)
     data["rsi_1h"]   = round(rt.rsi_1h, 2) if hasattr(rt, "rsi_1h") else _state.get("current_rsi", 0)
     data["rsi_15m"]  = round(rt.rsi_15m, 2) if hasattr(rt, "rsi_15m") else 0
@@ -839,35 +841,35 @@ def api():
 
 @app.route('/api/b')
 @login_required
-def api_b(): return jsonify(state_b)
+def api_b(): return jsonify(snapshot_state('B'))
 
 @app.route('/api/c')
 @login_required
-def api_c(): return jsonify(state_c)
+def api_c(): return jsonify(snapshot_state('C'))
 
 @app.route('/api/d')
 @login_required
-def api_d(): return jsonify(state_d)
+def api_d(): return jsonify(snapshot_state('D'))
 
 @app.route('/cm')
 @login_required
 def strategy_cm():
-    s = dict(state_cm); s['box'] = None
+    s = snapshot_state('CM'); s['box'] = None
     return render_dash('cm','/api/cm','te', s)
 
 @app.route('/api/cm')
 @login_required
-def api_cm(): return jsonify(state_cm)
+def api_cm(): return jsonify(snapshot_state('CM'))
 
 @app.route('/smc')
 @login_required
 def strategy_smc_page():
-    s = dict(state_smc); s['box'] = None
+    s = snapshot_state('SMC'); s['box'] = None
     return render_dash('smc','/api/smc','pu', s)
 
 @app.route('/api/smc')
 @login_required
-def api_smc(): return jsonify(state_smc)
+def api_smc(): return jsonify(snapshot_state('SMC'))
 
 
 # ── WEBHOOKS (no login) ──────────────────────────────────────
@@ -876,7 +878,7 @@ import threading
 
 def _wh_d(sig, price=None, data=None):
     global _d_last_signal_time
-    from bot import rt,state_d,save_state_d,send_telegram,calc_qty,place_order_paper,place_order_live,TRADING_MODE,RISK_PER_TRADE
+    from bot import rt,state_d,save_state_d,send_telegram,calc_qty,place_order_paper,place_order_live,TRADING_MODE,RISK_PER_TRADE,state_lock_d
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
@@ -910,11 +912,12 @@ def _wh_d(sig, price=None, data=None):
     oid=place_order_paper(sig,qty,p,sl,tp1) if TRADING_MODE=='PAPER' else place_order_live(sig,qty,sl,tp1)
     if oid:
         import json as _json
-        state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False,
-                            'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
-                            'ai_confidence': (_ai_res.confidence if _ai_res else 0),
-                            'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
-        state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
+        with state_lock_d:
+            state_d['position']={'type':sig,'entry':p,'sl':sl,'tp1':tp1,'tp2':tp2,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'has_confluence':cf,'phase1_done':False,
+                                'ai_action':_ai_act,'ai_shadow':AI_SHADOW_MASTER,
+                                'ai_confidence': (_ai_res.confidence if _ai_res else 0),
+                                'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
+            state_d['last_signal']=sig; state_d['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state_d()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[D] {sig}</b>\nEntry: ${p:,.2f} | TP1: ${tp1:,.2f} | TP2: ${tp2:,.2f} | SL: ${sl:,.2f}")
 
@@ -922,7 +925,7 @@ def _wh_smc(sig, price=None, data=None):
     """SMC webhook → delegate στο αυτόνομο strategies/strategy_smc.py module."""
     from bot import (rt, state_smc, save_state_smc, send_telegram, calc_qty,
                      place_order_paper, place_order_live, _ai_validate,
-                     _send_ai_trade_summary, TRADING_MODE)
+                     _send_ai_trade_summary, TRADING_MODE, state_lock_smc)
     from strategies import strategy_smc
 
     def _place(side, qty, entry, sl, tp):
@@ -939,12 +942,13 @@ def _wh_smc(sig, price=None, data=None):
         "send_ai_summary": _send_ai_trade_summary,
         "trading_mode":    TRADING_MODE,
         "rt":              rt,
+        "lock":            state_lock_smc,
     }
     strategy_smc.process_webhook(deps, state_smc, sig, price, data)
 
 def _wh_a(sig, price=None, data=None):
     from bot import rt,state,build_daily_box,get_candles,calc_qty,place_order_paper,place_order_live
-    from bot import find_4h_sr,detect_divergence,fetch_news,ai_news_score,save_state,send_telegram,TRADING_MODE,RISK_PER_TRADE
+    from bot import find_4h_sr,detect_divergence,fetch_news,ai_news_score,save_state,send_telegram,TRADING_MODE,RISK_PER_TRADE,state_lock
     from datetime import datetime,timezone
     if data is None: data={}
     p=price or rt.price
@@ -974,8 +978,9 @@ def _wh_a(sig, price=None, data=None):
     hl=fetch_news(); sc,sm=ai_news_score(hl,sig,p,box)
     oid=place_order_paper(sig,qty,p,sl,tp) if _TRADING_MODE_C=='PAPER' else place_order_live(sig,qty,sl,tp)
     if oid:
-        state['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'news_score':sc,'news_summary':sm,'has_divergence':bear_d}
-        state['last_signal']=sig; state['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
+        with state_lock:
+            state['position']={'type':sig,'entry':p,'sl':sl,'tp':tp,'qty':qty,'time':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'order_id':oid,'news_score':sc,'news_summary':sm,'has_divergence':bear_d}
+            state['last_signal']=sig; state['last_signal_time']=datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state()
         send_telegram(f"{'🔴' if sig=='SHORT' else '🟢'} <b>[A] {sig}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
 
@@ -985,7 +990,7 @@ def _wh_c(sig, price=None, data=None):
     from bot import (rt, state_c, save_state_c, send_telegram, calc_qty,
                      place_order_paper, place_order_live, get_candles, build_1h_box,
                      _ai_validate, _send_ai_trade_summary, TRADING_MODE, RISK_PER_TRADE,
-                     AI_SHADOW_MASTER)
+                     AI_SHADOW_MASTER, state_lock_c)
     from strategies import strategy_c
 
     # Per-strategy overrides — TRADING_MODE_C / RISK_PER_TRADE_C αν υπάρχουν
@@ -1009,6 +1014,7 @@ def _wh_c(sig, price=None, data=None):
         "rt":               rt,
         "risk_pct":         _RISK_C,
         "ai_shadow_master": AI_SHADOW_MASTER,
+        "lock":             state_lock_c,
     }
     strategy_c.process_webhook(deps, state_c, sig, price, data)
 
@@ -1083,13 +1089,17 @@ def toggle_trailing(strategy):
     s = strategy.upper()
     try:
         if s == 'B':
-            state_b['trailing_enabled'] = not state_b.get('trailing_enabled', True)
+            with state_lock_b:
+                state_b['trailing_enabled'] = not state_b.get('trailing_enabled', True)
+                enabled = state_b['trailing_enabled']
             save_state_b()
-            return __import__('flask').jsonify({'ok': True, 'enabled': state_b['trailing_enabled']})
+            return __import__('flask').jsonify({'ok': True, 'enabled': enabled})
         elif s == 'C':
-            state_c['trailing_enabled'] = not state_c.get('trailing_enabled', True)
+            with state_lock_c:
+                state_c['trailing_enabled'] = not state_c.get('trailing_enabled', True)
+                enabled = state_c['trailing_enabled']
             save_state_c()
-            return __import__('flask').jsonify({'ok': True, 'enabled': state_c['trailing_enabled']})
+            return __import__('flask').jsonify({'ok': True, 'enabled': enabled})
         return __import__('flask').jsonify({'error': 'Invalid strategy'}), 400
     except Exception as e:
         return __import__('flask').jsonify({'error': str(e)}), 500
@@ -1113,39 +1123,43 @@ def reset_strategy(strategy):
     reset_balance = 10000.0
 
     if s == 'A':
-        state.update({
-            "balance": reset_balance, "pnl_total": 0,
-            "wins": 0, "losses": 0, "position": None,
-            "trades": [], "last_signal": "WAIT",
-        })
-        db_save_state("A", state)
+        with state_lock:
+            state.update({
+                "balance": reset_balance, "pnl_total": 0,
+                "wins": 0, "losses": 0, "position": None,
+                "trades": [], "last_signal": "WAIT",
+            })
+        db_save_state("A", snapshot_state("A"))
         _reset_trades_db("A")
         save_state()
     elif s == 'B':
-        state_b.update({
-            "balance": reset_balance, "pnl_total": 0,
-            "wins": 0, "losses": 0, "position": None,
-            "trades": [], "last_signal": "WAIT",
-        })
-        db_save_state("B", state_b)
+        with state_lock_b:
+            state_b.update({
+                "balance": reset_balance, "pnl_total": 0,
+                "wins": 0, "losses": 0, "position": None,
+                "trades": [], "last_signal": "WAIT",
+            })
+        db_save_state("B", snapshot_state("B"))
         _reset_trades_db("B")
         save_state_b()
     elif s == 'C':
-        state_c.update({
-            "balance": reset_balance, "pnl_total": 0,
-            "wins": 0, "losses": 0, "position": None,
-            "trades": [], "last_signal": "WAIT",
-        })
-        db_save_state("C", state_c)
+        with state_lock_c:
+            state_c.update({
+                "balance": reset_balance, "pnl_total": 0,
+                "wins": 0, "losses": 0, "position": None,
+                "trades": [], "last_signal": "WAIT",
+            })
+        db_save_state("C", snapshot_state("C"))
         _reset_trades_db("C")
         save_state_c()
     elif s == 'D':
-        state_d.update({
-            "balance": reset_balance, "pnl_total": 0,
-            "wins": 0, "losses": 0, "position": None,
-            "trades": [], "last_signal": "WAIT",
-        })
-        db_save_state("D", state_d)
+        with state_lock_d:
+            state_d.update({
+                "balance": reset_balance, "pnl_total": 0,
+                "wins": 0, "losses": 0, "position": None,
+                "trades": [], "last_signal": "WAIT",
+            })
+        db_save_state("D", snapshot_state("D"))
         _reset_trades_db("D")
         save_state_d()
 
