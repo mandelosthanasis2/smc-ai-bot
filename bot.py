@@ -50,7 +50,7 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
     # ── 2. Per-user settings (από DB) ────────────────────────
     try:
         user_ai = db_get_user_ai_settings(user_id)
-    except Exception as e:
+    except Exception as e:  # broad on purpose: any DB failure → fall back to safe defaults
         log.warning(f"[AIValidator] Could not read user settings: {e} — using defaults")
         user_ai = {"ai_validator_enabled": True, "ai_shadow_mode": True}
     
@@ -114,7 +114,7 @@ def _ai_validate(strategy, side, entry_price, stop_loss, take_profit,
         if shadow_active:
             return "GO", 1.0, result   # shadow: εκτέλεση κανονικά
         return action, mult, result
-    except Exception as e:
+    except Exception as e:  # broad on purpose: AI layer must never block a trade → default GO
         log.error(f"[AIValidator] Error: {e} — defaulting to GO")
         return "GO", 1.0, None
 
@@ -153,7 +153,7 @@ def _send_ai_trade_summary(strategy, side, entry_price, sl, tp,
         else:
             # Fallback: string format
             score_str = str(tech_data)[:80]
-    except Exception:
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError):
         score_str = tech[:80]
 
     # ── News score extraction ──
@@ -199,7 +199,7 @@ def send_telegram(msg):
             data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
             timeout=5
         )
-    except Exception as e:
+    except requests.RequestException as e:
         log.warning(f"Telegram error: {e}")
 
 # -- BITGET API ---------------------------------------------------
@@ -211,7 +211,7 @@ def bitget_get(path, params=None):
     try:
         r = requests.get(BITGET_BASE + path, params=params, timeout=10)
         return r.json()
-    except Exception as e:
+    except (requests.RequestException, ValueError) as e:
         log.error(f"Bitget GET error: {e}")
         return {}
 
@@ -236,7 +236,7 @@ def bitget_signed(method, path, body=None):
         else:
             r = requests.post(BITGET_BASE + path, headers=headers, data=body_str, timeout=10)
         return r.json()
-    except Exception as e:
+    except (requests.RequestException, ValueError) as e:
         log.error(f"Bitget signed error: {e}")
         return {}
 
@@ -259,7 +259,7 @@ def get_candles(granularity, limit=500):
                 "high": float(c[2]), "low": float(c[3]),
                 "close": float(c[4]), "volume": float(c[5]),
             })
-        except Exception:
+        except (ValueError, TypeError, IndexError):
             pass
     # Sort by time ascending (oldest first) regardless of API order
     candles.sort(key=lambda x: x["time"])
@@ -373,7 +373,7 @@ class RealtimeData:
         })
         try:
             self.price = float(r["data"][0]["lastPr"])
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             pass
         self._update_rsi()
         self.initialized = True
@@ -423,7 +423,7 @@ class RealtimeData:
                             log.info(f"RSI after 15m close: 15m={self.rsi_15m}")
                         elif "4H"  in chan:
                             with self.lock: self.closes_4h.append(close_price)
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
             log.warning(f"WS parse error: {e}")
 
     def start_websocket(self):
@@ -442,7 +442,7 @@ class RealtimeData:
                         ping_timeout=8,
                         reconnect=5,
                     )
-                except Exception as e:
+                except Exception as e:  # broad on purpose: reconnect loop must never die
                     log.error(f"WS run error: {e}")
                 time.sleep(3)
 
@@ -484,7 +484,7 @@ class RealtimeData:
                     })
                     self.price = float(r["data"][0]["lastPr"])
                     self._update_rsi()  # keep RSI fresh via polling too
-                except Exception:
+                except Exception:  # broad on purpose: fallback polling loop must never die
                     pass
                 time.sleep(3)
         threading.Thread(target=poll, daemon=True).start()
@@ -741,7 +741,7 @@ def load_state_d():
             merged = {**DEFAULT_STATE_D, **saved}
             log.info(f"State D from JSON: ${merged.get('balance',10000):.2f}")
             return merged
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state D JSON error: {e}")
     merged = {**DEFAULT_STATE_D, **SAVED_STATE_D}
     log.info(f"State D from SAVED_STATE_D: ${merged['balance']:.2f}")
@@ -753,7 +753,7 @@ def save_state_d():
     try:
         with open(STATE_FILE_D, "w") as f:
             json.dump(snap, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state D JSON error: {e}")
 
 
@@ -767,7 +767,7 @@ def load_state_cm():
         if os.path.exists(STATE_FILE_CM):
             with open(STATE_FILE_CM) as f: saved = json.load(f)
             return {**DEFAULT_STATE_CM, **saved}
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state CM error: {e}")
     return {**DEFAULT_STATE_CM}
 
@@ -777,7 +777,7 @@ def save_state_cm():
     try:
         with open(STATE_FILE_CM, "w") as f:
             json.dump(snap, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state CM error: {e}")
 
 def load_state_smc():
@@ -792,7 +792,7 @@ def load_state_smc():
             merged = {**DEFAULT_STATE_SMC, **saved}
             log.info(f"State SMC from JSON: ${merged.get('balance',10000):.2f}")
             return merged
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state SMC error: {e}")
     merged = {**DEFAULT_STATE_SMC, **SAVED_STATE_SMC}
     log.info(f"State SMC from SAVED_STATE_SMC: ${merged['balance']:.2f}")
@@ -804,7 +804,7 @@ def save_state_smc():
     try:
         with open(STATE_FILE_SMC, "w") as f:
             json.dump(snap, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state SMC JSON error: {e}")
 
 def load_state_c():
@@ -821,7 +821,7 @@ def load_state_c():
             merged = {**DEFAULT_STATE_C, **saved}
             log.info(f"State C from JSON: ${merged.get('balance',10000):.2f}")
             return merged
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state C JSON error: {e}")
     # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE_C, **SAVED_STATE_C}
@@ -836,7 +836,7 @@ def save_state_c():
     try:
         with open(STATE_FILE_C, "w") as f:
             json.dump(snap, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state C JSON error: {e}")
 
 def load_state():
@@ -855,7 +855,7 @@ def load_state():
             merged["running"] = True; merged["mode"] = TRADING_MODE
             log.info(f"State A from JSON: ${merged['balance']:.2f}")
             return merged
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state A JSON error: {e}")
     # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE, **SAVED_STATE}
@@ -877,7 +877,7 @@ def load_state_b():
             merged = {**DEFAULT_STATE_B, **saved}
             log.info(f"State B from JSON: ${merged.get('balance',10000):.2f}")
             return merged
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         log.warning(f"Load state B JSON error: {e}")
     # 3) Fallback: hardcoded
     merged = {**DEFAULT_STATE_B, **SAVED_STATE_B}
@@ -892,7 +892,7 @@ def save_state():
     try:
         with open(STATE_FILE, "w") as f:
             json.dump({k:v for k,v in snap.items() if k!="running"}, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state A JSON error: {e}")
 
 def save_state_b():
@@ -903,7 +903,7 @@ def save_state_b():
     try:
         with open(STATE_FILE_B, "w") as f:
             json.dump(snap, f, indent=2, default=str)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         log.warning(f"Save state B JSON error: {e}")
 
 # =================================================================
@@ -988,7 +988,7 @@ def fetch_news():
         try:
             feed = feedparser.parse(url)
             for e in feed.entries[:4]: headlines.append(e.title)
-        except Exception: pass
+        except (AttributeError, KeyError, TypeError): pass
     state["last_news_headlines"] = headlines[:20]
     return headlines[:20]
 
@@ -1009,7 +1009,7 @@ JSON only: {{"score":<-2 to 2>,"summary":"<15 words>"}}"""
         state["last_news_score"]   = score
         state["last_news_summary"] = summary
         return score, summary
-    except Exception as e:
+    except Exception as e:  # broad on purpose: news scoring is best-effort → neutral on any failure
         log.error(f"AI news error: {e}")
         return 0, ""
 
@@ -1024,7 +1024,7 @@ def get_balance_a():
         bal = float(r.get("data",{}).get("available", state["balance"]))
         state["balance"] = bal
         return bal
-    except Exception: return state["balance"]
+    except (KeyError, TypeError, ValueError): return state["balance"]
 
 def calc_qty(balance, risk_pct, entry, sl):
     risk_dist = abs(entry - sl)
@@ -1589,7 +1589,7 @@ def bot_loop():
                     log.error(f"Strategy SMC error: {e}")
             save_state_smc()
 
-        except Exception as e:
+        except Exception as e:  # broad on purpose: scheduler loop must never crash
             log.error(f"Main loop error: {e}")
 
         time.sleep(30)
