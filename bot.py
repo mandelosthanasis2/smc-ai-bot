@@ -7,6 +7,7 @@ Strategy B: 1H box + 15m RSI
 
 import os
 import json
+import copy
 import time
 import logging
 import threading
@@ -747,10 +748,11 @@ def load_state_d():
     return merged
 
 def save_state_d():
-    db_save_state("D", state_d)
+    snap = snapshot_state("D")   # consistent copy under lock; I/O below is lock-free
+    db_save_state("D", snap)
     try:
         with open(STATE_FILE_D, "w") as f:
-            json.dump(state_d, f, indent=2, default=str)
+            json.dump(snap, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state D JSON error: {e}")
 
@@ -770,10 +772,11 @@ def load_state_cm():
     return {**DEFAULT_STATE_CM}
 
 def save_state_cm():
-    db_save_state("CM", state_cm)
+    snap = snapshot_state("CM")   # consistent copy under lock; I/O below is lock-free
+    db_save_state("CM", snap)
     try:
         with open(STATE_FILE_CM, "w") as f:
-            json.dump(state_cm, f, indent=2, default=str)
+            json.dump(snap, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state CM error: {e}")
 
@@ -796,10 +799,11 @@ def load_state_smc():
     return merged
 
 def save_state_smc():
-    db_save_state("SMC", state_smc)
+    snap = snapshot_state("SMC")   # consistent copy under lock; I/O below is lock-free
+    db_save_state("SMC", snap)
     try:
         with open(STATE_FILE_SMC, "w") as f:
-            json.dump(state_smc, f, indent=2, default=str)
+            json.dump(snap, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state SMC JSON error: {e}")
 
@@ -825,12 +829,13 @@ def load_state_c():
     return merged
 
 def save_state_c():
+    snap = snapshot_state("C")   # consistent copy under lock; I/O below is lock-free
     # Αποθήκευση στη DB
-    db_save_state("C", state_c)
+    db_save_state("C", snap)
     # Backup JSON (fallback)
     try:
         with open(STATE_FILE_C, "w") as f:
-            json.dump(state_c, f, indent=2, default=str)
+            json.dump(snap, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state C JSON error: {e}")
 
@@ -880,22 +885,24 @@ def load_state_b():
     return merged
 
 def save_state():
+    snap = snapshot_state("A")   # consistent copy under lock; I/O below is lock-free
     # Αποθήκευση στη DB
-    db_save_state("A", state)
+    db_save_state("A", snap)
     # Backup JSON (fallback)
     try:
         with open(STATE_FILE, "w") as f:
-            json.dump({k:v for k,v in state.items() if k!="running"}, f, indent=2, default=str)
+            json.dump({k:v for k,v in snap.items() if k!="running"}, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state A JSON error: {e}")
 
 def save_state_b():
+    snap = snapshot_state("B")   # consistent copy under lock; I/O below is lock-free
     # Αποθήκευση στη DB
-    db_save_state("B", state_b)
+    db_save_state("B", snap)
     # Backup JSON (fallback)
     try:
         with open(STATE_FILE_B, "w") as f:
-            json.dump(state_b, f, indent=2, default=str)
+            json.dump(snap, f, indent=2, default=str)
     except Exception as e:
         log.warning(f"Save state B JSON error: {e}")
 
@@ -916,6 +923,49 @@ state_c = load_state_c()
 state_d = load_state_d()
 state_cm = load_state_cm()
 state_smc = load_state_smc()
+
+# =================================================================
+# THREAD SAFETY — per-strategy locks
+# =================================================================
+# The state dicts above are written by the scheduler thread (bot_loop) and the
+# webhook threads, and read by the Flask request threads (dashboards / APIs).
+# Each strategy gets its OWN re-entrant lock:
+#   • per-strategy → a slow save/serialize on one strategy never blocks reads
+#     of another, and only ONE lock is ever held in any code path, so there is
+#     no lock-ordering cycle and therefore no possibility of deadlock;
+#   • RLock → a writer holding the lock can call save_state*/finalize, which
+#     re-acquire the same lock, without self-deadlocking.
+# Locks are held ONLY around fast in-memory mutations and the snapshot copy in
+# snapshot_state(); never around network / exchange / AI-validation / DB / file
+# I/O — so the dashboard never blocks waiting on a writer.
+state_lock     = threading.RLock()
+state_lock_b   = threading.RLock()
+state_lock_c   = threading.RLock()
+state_lock_d   = threading.RLock()
+state_lock_cm  = threading.RLock()
+state_lock_smc = threading.RLock()
+
+_STATE_REGISTRY = {
+    "A":   (state,     state_lock),
+    "B":   (state_b,   state_lock_b),
+    "C":   (state_c,   state_lock_c),
+    "D":   (state_d,   state_lock_d),
+    "CM":  (state_cm,  state_lock_cm),
+    "SMC": (state_smc, state_lock_smc),
+}
+
+def snapshot_state(name):
+    """Return a detached deepcopy of a strategy's state, taken under its lock.
+
+    The lock is held only for the (fast, in-memory) copy; the caller then
+    serializes / renders the snapshot WITHOUT holding the lock, so a Flask
+    reader never blocks on a scheduler write and a scheduler write never blocks
+    on template rendering. deepcopy touches only plain dict/list/scalar data
+    and calls no application code, so it cannot re-enter a writer's lock.
+    """
+    st, lock = _STATE_REGISTRY[name]
+    with lock:
+        return copy.deepcopy(st)
 
 # Race condition guard — αποτρέπει διπλό AI call όταν το scheduler τρέχει κάθε 30s.
 # (Το _b_entering μετακινήθηκε στο strategies/strategy_b.py ως module-level guard.)
@@ -985,10 +1035,6 @@ def finalize_trade_a(price, result, note=""):
     pos = state["position"]
     if not pos: return
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price)) * pos["qty"], 2)
-    state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
-    state["balance"]   = round(state["balance"]   + pnl, 2)
-    if result == "WIN":         state["wins"]   += 1
-    elif result == "LOSS":      state["losses"] += 1
     # BREAK EVEN: δεν μετράει ούτε win ούτε loss
     trade = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
@@ -1001,19 +1047,24 @@ def finalize_trade_a(price, result, note=""):
         "ai_reasoning": pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state["trades"].append(trade)
-    db_save_trade("A", trade)
-    wins = state["wins"]; losses = state["losses"]
-    wr   = round(wins/(wins+losses)*100) if wins+losses>0 else 0
+    with state_lock:
+        state["pnl_total"] = round(state["pnl_total"] + pnl, 2)
+        state["balance"]   = round(state["balance"]   + pnl, 2)
+        if result == "WIN":         state["wins"]   += 1
+        elif result == "LOSS":      state["losses"] += 1
+        state["trades"].append(trade)
+        wins = state["wins"]; losses = state["losses"]; bal = state["balance"]
+        state["position"] = None
+    wr    = round(wins/(wins+losses)*100) if wins+losses>0 else 0
     emoji = "✅" if result=="WIN" else "❌"
+    db_save_trade("A", trade)
     send_telegram(
         f"{emoji} <b>[A] {note or result}</b>\n"
         f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state['balance']:,.2f}\n"
+        f"Balance: ${bal:,.2f}\n"
         f"W/L: {wins}W/{losses}L | WR: {wr}%"
     )
     if TRADING_MODE == "LIVE": close_position_live(pos["type"], pos["qty"])
-    state["position"] = None
     save_state()
 
 # check_position_a μετακινήθηκε στο strategies/strategy_a.py (Phase 2 refactor).
@@ -1027,10 +1078,6 @@ def finalize_trade_b(price, result, note=""):
     pos = state_b["position"]
     if not pos: return
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
-    state_b["pnl_total"] = round(state_b["pnl_total"]+pnl, 2)
-    state_b["balance"]   = round(state_b["balance"]  +pnl, 2)
-    if result == "WIN":    state_b["wins"]   += 1
-    elif result == "LOSS": state_b["losses"] += 1
     # BREAK EVEN: δεν μετράει ούτε win ούτε loss
     trade_b = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
@@ -1042,17 +1089,22 @@ def finalize_trade_b(price, result, note=""):
         "ai_reasoning": pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state_b["trades"].append(trade_b)
-    db_save_trade("B", trade_b)
-    wins=state_b["wins"]; losses=state_b["losses"]
+    with state_lock_b:
+        state_b["pnl_total"] = round(state_b["pnl_total"]+pnl, 2)
+        state_b["balance"]   = round(state_b["balance"]  +pnl, 2)
+        if result == "WIN":    state_b["wins"]   += 1
+        elif result == "LOSS": state_b["losses"] += 1
+        state_b["trades"].append(trade_b)
+        wins=state_b["wins"]; losses=state_b["losses"]; bal=state_b["balance"]
+        state_b["position"] = None
     emoji = "✅" if result=="WIN" else "❌"
+    db_save_trade("B", trade_b)
     send_telegram(
         f"{emoji} <b>[B] {note or result}</b>\n"
         f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state_b['balance']:,.2f}\n"
+        f"Balance: ${bal:,.2f}\n"
         f"W/L: {wins}W/{losses}L"
     )
-    state_b["position"] = None
     save_state_b()
 
 # check_position_b μετακινήθηκε στο strategies/strategy_b.py (Phase 2 refactor).
@@ -1088,6 +1140,7 @@ def run_strategy_a():
         "risk_per_trade":      RISK_PER_TRADE,
         "ai_shadow_mode":      AI_SHADOW_MODE,
         "ai_shadow_master":    AI_SHADOW_MASTER,
+        "lock":                state_lock,
     }
     strategy_a.on_tick(deps, state, price)
 
@@ -1099,10 +1152,6 @@ def finalize_trade_c(price, result, note=""):
     pos = state_c["position"]
     if not pos: return
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
-    state_c["pnl_total"] = round(state_c["pnl_total"]+pnl, 2)
-    state_c["balance"]   = round(state_c["balance"]  +pnl, 2)
-    if result == "WIN":    state_c["wins"]   += 1
-    elif result == "LOSS": state_c["losses"] += 1
     # BREAK EVEN: δεν μετράει
     trade_c = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
@@ -1114,16 +1163,21 @@ def finalize_trade_c(price, result, note=""):
         "ai_reasoning": pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state_c["trades"].append(trade_c)
-    db_save_trade("C", trade_c)
-    wins=state_c["wins"]; losses=state_c["losses"]
+    with state_lock_c:
+        state_c["pnl_total"] = round(state_c["pnl_total"]+pnl, 2)
+        state_c["balance"]   = round(state_c["balance"]  +pnl, 2)
+        if result == "WIN":    state_c["wins"]   += 1
+        elif result == "LOSS": state_c["losses"] += 1
+        state_c["trades"].append(trade_c)
+        wins=state_c["wins"]; losses=state_c["losses"]; bal=state_c["balance"]
+        state_c["position"] = None
     emoji = "✅" if result=="WIN" else "❌"
+    db_save_trade("C", trade_c)
     msg = (f"{emoji} <b>[C] {note or result}</b>\n"
            f"PnL: {'+' if pnl>=0 else ''}${pnl:.2f}\n"
-           f"Balance: ${state_c['balance']:,.2f}\n"
+           f"Balance: ${bal:,.2f}\n"
            f"W/L: {wins}W/{losses}L")
     send_telegram(msg)
-    state_c["position"] = None
     save_state_c()
 
 def check_position_c(price):
@@ -1133,6 +1187,7 @@ def check_position_c(price):
         "finalize":      finalize_trade_c,
         "send_telegram": send_telegram,
         "save_state":    save_state_c,
+        "lock":          state_lock_c,
     }
     strategy_c.check_position(deps, state_c, price)
 
@@ -1160,6 +1215,7 @@ def run_strategy_b():
         "trading_mode":      TRADING_MODE,
         "risk_per_trade":    RISK_PER_TRADE,
         "ai_shadow_master":  AI_SHADOW_MASTER,
+        "lock":              state_lock_b,
     }
     strategy_b.on_tick(deps, state_b, price)
 
@@ -1172,10 +1228,6 @@ def finalize_trade_d(price, result, note=""):
     pos = state_d["position"]
     if not pos: return
     pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
-    state_d["pnl_total"] = round(state_d["pnl_total"] + pnl, 2)
-    state_d["balance"]   = round(state_d["balance"]   + pnl, 2)
-    if result == "WIN": state_d["wins"]   += 1
-    else:               state_d["losses"] += 1
     trade_d = {
         "type":       pos["type"],
         "entry":      pos["entry"],
@@ -1190,17 +1242,22 @@ def finalize_trade_d(price, result, note=""):
         "ai_reasoning":  pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state_d["trades"].append(trade_d)
-    db_save_trade("D", trade_d)
-    wins = state_d["wins"]; losses = state_d["losses"]
+    with state_lock_d:
+        state_d["pnl_total"] = round(state_d["pnl_total"] + pnl, 2)
+        state_d["balance"]   = round(state_d["balance"]   + pnl, 2)
+        if result == "WIN": state_d["wins"]   += 1
+        else:               state_d["losses"] += 1
+        state_d["trades"].append(trade_d)
+        wins = state_d["wins"]; losses = state_d["losses"]; bal = state_d["balance"]
+        state_d["position"] = None
     emoji = "✅" if result == "WIN" else "❌"
+    db_save_trade("D", trade_d)
     send_telegram(
         f"{emoji} <b>[D] {note or result}</b>\n"
         f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state_d['balance']:,.2f}\n"
+        f"Balance: ${bal:,.2f}\n"
         f"W/L: {wins}W/{losses}L"
     )
-    state_d["position"] = None
     save_state_d()
 
 
@@ -1208,10 +1265,6 @@ def finalize_trade_cm(price, result, note=""):
     pos = state_cm["position"]
     if not pos: return
     pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
-    state_cm["pnl_total"] = round(state_cm["pnl_total"] + pnl, 2)
-    state_cm["balance"]   = round(state_cm["balance"]   + pnl, 2)
-    if result == "WIN": state_cm["wins"]   += 1
-    elif result == "LOSS": state_cm["losses"] += 1
     trade_cm = {
         "type":       pos["type"],
         "entry":      pos["entry"],
@@ -1226,25 +1279,27 @@ def finalize_trade_cm(price, result, note=""):
         "ai_reasoning":  pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state_cm["trades"].append(trade_cm)
-    db_save_trade("CM", trade_cm)
-    wins = state_cm["wins"]; losses = state_cm["losses"]
+    with state_lock_cm:
+        state_cm["pnl_total"] = round(state_cm["pnl_total"] + pnl, 2)
+        state_cm["balance"]   = round(state_cm["balance"]   + pnl, 2)
+        if result == "WIN": state_cm["wins"]   += 1
+        elif result == "LOSS": state_cm["losses"] += 1
+        state_cm["trades"].append(trade_cm)
+        wins = state_cm["wins"]; losses = state_cm["losses"]; bal = state_cm["balance"]
+        state_cm["position"] = None
     emoji = "✅" if result == "WIN" else ("➖" if result == "BREAK EVEN" else "❌")
+    db_save_trade("CM", trade_cm)
     send_telegram(
         f"{emoji} <b>[CM] {note or result}</b>\n"
         f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state_cm['balance']:,.2f}\n"
+        f"Balance: ${bal:,.2f}\n"
         f"W/L: {wins}W/{losses}L"
     )
-    state_cm["position"] = None
     save_state_cm()
 
 
 def finalize_partial_cm(close_price, partial_qty, partial_pnl, note=""):
     """Καταγράφει partial close (TP1 50%) — κρατάει τη θέση ανοιχτή."""
-    state_cm["balance"]   = round(state_cm["balance"]   + partial_pnl, 2)
-    state_cm["pnl_total"] = round(state_cm["pnl_total"] + partial_pnl, 2)
-    state_cm["wins"]     += 1
     pos = state_cm["position"]
     trade_cm = {
         "type":   pos["type"] if pos else "",
@@ -1256,7 +1311,11 @@ def finalize_partial_cm(close_price, partial_qty, partial_pnl, note=""):
         "divergence": False,
         "note":   note,
     }
-    state_cm["trades"].append(trade_cm)
+    with state_lock_cm:
+        state_cm["balance"]   = round(state_cm["balance"]   + partial_pnl, 2)
+        state_cm["pnl_total"] = round(state_cm["pnl_total"] + partial_pnl, 2)
+        state_cm["wins"]     += 1
+        state_cm["trades"].append(trade_cm)
     db_save_trade("CM", trade_cm)
     log.info(f"[CM] Partial close @ {close_price:.2f} | +${partial_pnl:.2f}")
     save_state_cm()
@@ -1280,6 +1339,7 @@ def run_strategy_cm():
         "save_state":     save_state_cm,
         "send_ai_summary":_send_ai_trade_summary,
         "rt":             rt,
+        "lock":           state_lock_cm,
     }
     strategy_checkmark.on_tick(deps, state_cm, price)
 
@@ -1293,10 +1353,6 @@ def finalize_trade_smc(price, result, note=""):
     pos = state_smc["position"]
     if not pos: return
     pnl = round(((price - pos["entry"]) if pos["type"] == "LONG" else (pos["entry"] - price)) * pos["qty"], 2)
-    state_smc["pnl_total"] = round(state_smc["pnl_total"] + pnl, 2)
-    state_smc["balance"]   = round(state_smc["balance"]   + pnl, 2)
-    if result == "WIN": state_smc["wins"]   += 1
-    elif result == "LOSS": state_smc["losses"] += 1
     trade_smc = {
         "type":       pos["type"],
         "entry":      pos["entry"],
@@ -1311,25 +1367,27 @@ def finalize_trade_smc(price, result, note=""):
         "ai_reasoning":  pos.get("ai_reasoning", ""),
         "ai_shadow_mode": pos.get("ai_shadow", False),
     }
-    state_smc["trades"].append(trade_smc)
-    db_save_trade("SMC", trade_smc)
-    wins = state_smc["wins"]; losses = state_smc["losses"]
+    with state_lock_smc:
+        state_smc["pnl_total"] = round(state_smc["pnl_total"] + pnl, 2)
+        state_smc["balance"]   = round(state_smc["balance"]   + pnl, 2)
+        if result == "WIN": state_smc["wins"]   += 1
+        elif result == "LOSS": state_smc["losses"] += 1
+        state_smc["trades"].append(trade_smc)
+        wins = state_smc["wins"]; losses = state_smc["losses"]; bal = state_smc["balance"]
+        state_smc["position"] = None
     emoji = "✅" if result == "WIN" else ("➖" if result == "BREAK EVEN" else "❌")
+    db_save_trade("SMC", trade_smc)
     send_telegram(
         f"{emoji} <b>[SMC] {note or result}</b>\n"
         f"PnL: {'+' if pnl >= 0 else ''}${pnl:.2f}\n"
-        f"Balance: ${state_smc['balance']:,.2f}\n"
+        f"Balance: ${bal:,.2f}\n"
         f"W/L: {wins}W/{losses}L"
     )
-    state_smc["position"] = None
     save_state_smc()
 
 
 def finalize_partial_smc(close_price, partial_qty, partial_pnl, note=""):
     """Καταγράφει partial close (TP1 50%) — κρατάει τη θέση ανοιχτή."""
-    state_smc["balance"]   = round(state_smc["balance"]   + partial_pnl, 2)
-    state_smc["pnl_total"] = round(state_smc["pnl_total"] + partial_pnl, 2)
-    state_smc["wins"]     += 1
     pos = state_smc["position"]
     trade_smc = {
         "type":   pos["type"] if pos else "",
@@ -1341,7 +1399,11 @@ def finalize_partial_smc(close_price, partial_qty, partial_pnl, note=""):
         "divergence": pos.get("has_confluence", False) if pos else False,
         "note":   note,
     }
-    state_smc["trades"].append(trade_smc)
+    with state_lock_smc:
+        state_smc["balance"]   = round(state_smc["balance"]   + partial_pnl, 2)
+        state_smc["pnl_total"] = round(state_smc["pnl_total"] + partial_pnl, 2)
+        state_smc["wins"]     += 1
+        state_smc["trades"].append(trade_smc)
     db_save_trade("SMC", trade_smc)
     log.info(f"[SMC] Partial close @ {close_price:.2f} | +${partial_pnl:.2f}")
     save_state_smc()
@@ -1355,6 +1417,7 @@ def check_position_smc(price):
         "finalize_partial": finalize_partial_smc,
         "send_telegram":    send_telegram,
         "save_state":       save_state_smc,
+        "lock":             state_lock_smc,
     }
     strategy_smc.check_position(deps, state_smc, price)
 
@@ -1380,21 +1443,22 @@ def check_position_d(price):
             # Close 50% of position at TP1
             partial_qty = round(pos["qty"] * 0.5, 6)
             partial_pnl = round(((tp1 - entry) if is_long else (entry - tp1)) * partial_qty, 2)
-            state_d["balance"]   = round(state_d["balance"]   + partial_pnl, 2)
-            state_d["pnl_total"] = round(state_d["pnl_total"] + partial_pnl, 2)
-            state_d["wins"]     += 1
             trade_d = {
                 "type": pos["type"], "entry": entry, "close": tp1,
                 "pnl": partial_pnl, "result": "WIN",
                 "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "divergence": pos.get("has_confluence", False), "note": "TP1 (50%)",
             }
-            state_d["trades"].append(trade_d)
+            with state_lock_d:
+                state_d["balance"]   = round(state_d["balance"]   + partial_pnl, 2)
+                state_d["pnl_total"] = round(state_d["pnl_total"] + partial_pnl, 2)
+                state_d["wins"]     += 1
+                state_d["trades"].append(trade_d)
+                # Move SL to entry (break even) and reduce qty
+                pos["sl"]          = entry
+                pos["qty"]         = round(pos["qty"] * 0.5, 6)
+                pos["phase1_done"] = True
             db_save_trade("D", trade_d)
-            # Move SL to entry (break even) and reduce qty
-            pos["sl"]          = entry
-            pos["qty"]         = round(pos["qty"] * 0.5, 6)
-            pos["phase1_done"] = True
             log.info(f"[D] TP1 hit @ {tp1:.2f} | +${partial_pnl:.2f} | SL → entry")
             send_telegram(
                 f"🎯 <b>[D] TP1 HIT (50%)</b>\n"
@@ -1466,8 +1530,9 @@ def bot_loop():
                     run_strategy_a()
                 except Exception as e:
                     log.error(f"Strategy A error: {e}")
-                    state["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                    state["errors"] = state["errors"][-10:]
+                    with state_lock:
+                        state["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                        state["errors"] = state["errors"][-10:]
                 save_state()
                 last_run_a = now_ts
 
@@ -1477,8 +1542,9 @@ def bot_loop():
                 run_strategy_b()
             except Exception as e:
                 log.error(f"Strategy B error: {e}")
-                state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                state_b["errors"] = state_b["errors"][-10:]
+                with state_lock_b:
+                    state_b["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                    state_b["errors"] = state_b["errors"][-10:]
             save_state_b()
 
             # Strategy CM (Check Mark) every 30s
@@ -1487,8 +1553,9 @@ def bot_loop():
                 run_strategy_cm()
             except Exception as e:
                 log.error(f"Strategy CM error: {e}")
-                state_cm["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
-                state_cm["errors"] = state_cm["errors"][-10:]
+                with state_lock_cm:
+                    state_cm["errors"].append(f"{now.strftime('%H:%M')} {str(e)[:80]}")
+                    state_cm["errors"] = state_cm["errors"][-10:]
             save_state_cm()
 
             # Strategy C: check open position every 30s (entries via webhook only)

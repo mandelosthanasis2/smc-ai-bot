@@ -19,10 +19,14 @@ Opening = NY session open (13:30 UTC) — εκεί μπαίνει η US ρευσ
 περνιούνται μέσω του deps dict — έτσι δεν χρειάζεται edit στο bot.py.
 """
 
+import contextlib
 import logging
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+# deps["lock"] = per-strategy RLock (live). Στα tests (χωρίς lock) → nullcontext.
+_NULL = contextlib.nullcontext()
 
 # ── Configuration ─────────────────────────────────────────────
 CONFIG = {
@@ -311,6 +315,7 @@ def on_tick(deps, state, price):
     cfg = CONFIG
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
+    lock          = deps.get("lock") or _NULL
 
     # ── Αν υπάρχει ανοιχτή θέση → manage ──
     if state.get("position"):
@@ -321,11 +326,12 @@ def on_tick(deps, state, price):
     cm = state.get("checkmark")
     today = _today_str()
     if not cm or cm.get("date") != today:
-        state["checkmark"] = {
-            "date":  today,
-            "stage": STAGE_WAITING_CHECK,
-            "check": None,
-        }
+        with lock:
+            state["checkmark"] = {
+                "date":  today,
+                "stage": STAGE_WAITING_CHECK,
+                "check": None,
+            }
         cm = state["checkmark"]
         save_state()
 
@@ -344,7 +350,8 @@ def on_tick(deps, state, price):
 
     # ── Εκτός session window → done ──
     if not _in_session_window(cfg) and cm["stage"] == STAGE_WAITING_CHECK:
-        cm["stage"] = STAGE_DONE
+        with lock:
+            cm["stage"] = STAGE_DONE
         save_state()
         return
 
@@ -355,8 +362,9 @@ def on_tick(deps, state, price):
         state["last_signal"] = "Scanning for Check (manipulation + blowoff)"
         check = _detect_check(deps, cm, cfg)
         if check:
-            cm["check"] = check
-            cm["stage"] = STAGE_WAITING_PIVOT
+            with lock:
+                cm["check"] = check
+                cm["stage"] = STAGE_WAITING_PIVOT
             save_state()
             send_telegram(
                 f"🔍 <b>[CM] CHECK FORMED</b>\n"
@@ -373,8 +381,9 @@ def on_tick(deps, state, price):
         state["last_signal"] = f"Check formed ({cm['check']['side']}) — waiting pivot test"
         confirmed, tests = _detect_pivot(deps, cm, cfg)
         if confirmed:
-            cm["stage"]       = STAGE_PIVOT_CONFIRMED
-            cm["pivot_tests"] = tests
+            with lock:
+                cm["stage"]       = STAGE_PIVOT_CONFIRMED
+                cm["pivot_tests"] = tests
             save_state()
             send_telegram(
                 f"✅ <b>[CM] PIVOT CONFIRMED</b>\n"
@@ -403,6 +412,7 @@ def _execute_entry(deps, state, entry, cm):
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
     ai_validate   = deps.get("ai_validate")
+    lock          = deps.get("lock") or _NULL
 
     side  = entry["side"]
     price = entry["entry"]
@@ -432,7 +442,8 @@ def _execute_entry(deps, state, entry, cm):
             log.error(f"[CM] AI validate error: {e}")
 
     if ai_action == "SKIP":
-        cm["stage"] = STAGE_DONE
+        with lock:
+            cm["stage"] = STAGE_DONE
         save_state()
         return
     if ai_action in ("REDUCE_SIZE", "DOUBLE_SIZE"):
@@ -444,22 +455,23 @@ def _execute_entry(deps, state, entry, cm):
         return
 
     import json as _json
-    state["position"] = {
-        "type":  side,
-        "entry": price,
-        "sl":    sl,
-        "tp":    tp,
-        "tp1":   entry["tp1"],
-        "tp2":   entry["tp2"],
-        "qty":   qty,
-        "trailing_active": False,
-        "phase1_done":     False,
-        "ai_action":     ai_action,
-        "ai_confidence": ai_result.confidence if ai_result else 0,
-        "ai_reasoning":  _json.dumps(ai_result.reasoning) if ai_result else "",
-        "ai_shadow":     getattr(ai_result, "source", "") == "ai_agents",
-    }
-    cm["stage"] = STAGE_ENTERED
+    with lock:
+        state["position"] = {
+            "type":  side,
+            "entry": price,
+            "sl":    sl,
+            "tp":    tp,
+            "tp1":   entry["tp1"],
+            "tp2":   entry["tp2"],
+            "qty":   qty,
+            "trailing_active": False,
+            "phase1_done":     False,
+            "ai_action":     ai_action,
+            "ai_confidence": ai_result.confidence if ai_result else 0,
+            "ai_reasoning":  _json.dumps(ai_result.reasoning) if ai_result else "",
+            "ai_shadow":     getattr(ai_result, "source", "") == "ai_agents",
+        }
+        cm["stage"] = STAGE_ENTERED
     save_state()
 
     send_telegram(
@@ -489,6 +501,7 @@ def _manage_position(deps, state, price):
     finalize_partial = deps["finalize_partial"]
     send_telegram    = deps["send_telegram"]
     save_state       = deps["save_state"]
+    lock             = deps.get("lock") or _NULL
 
     pos = state["position"]
     if not pos:
@@ -507,9 +520,10 @@ def _manage_position(deps, state, price):
             partial_qty = round(pos["qty"] * 0.5, 6)
             partial_pnl = round(((tp1 - entry) if is_long else (entry - tp1)) * partial_qty, 2)
             finalize_partial(tp1, partial_qty, partial_pnl, "TP1 (50%)")
-            pos["sl"]          = entry              # break-even
-            pos["qty"]         = round(pos["qty"] - partial_qty, 6)
-            pos["phase1_done"] = True
+            with lock:
+                pos["sl"]          = entry              # break-even
+                pos["qty"]         = round(pos["qty"] - partial_qty, 6)
+                pos["phase1_done"] = True
             save_state()
             send_telegram(
                 f"🎯 <b>[CM] TP1 HIT (50%)</b>\n"

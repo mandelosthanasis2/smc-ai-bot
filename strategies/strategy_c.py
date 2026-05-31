@@ -31,6 +31,7 @@ Exit model: 2-phase (trailing stop) — ίδιο με την B
 SL/TP math (R/R 2:1), sizing ή exit behaviour — μόνο δομή.
 """
 
+import contextlib
 import json as _json
 import logging
 import os
@@ -38,6 +39,9 @@ import time as _time
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+# deps["lock"] = per-strategy RLock (live). Στα tests (χωρίς lock) → nullcontext.
+_NULL = contextlib.nullcontext()
 
 # ── Configuration ─────────────────────────────────────────────
 # Named constants. Οι τιμές είναι ΠΑΝΟΜΟΙΟΤΥΠΕΣ με τα παλιά check_position_c /
@@ -84,6 +88,7 @@ def process_webhook(deps, state, signal, price=None, data=None):
     rt               = deps["rt"]
     risk_pct         = deps["risk_pct"]
     ai_shadow_master = deps["ai_shadow_master"]
+    lock             = deps.get("lock") or _NULL
 
     p = price or get_price()
     now = _time.time()
@@ -121,12 +126,13 @@ def process_webhook(deps, state, signal, price=None, data=None):
     # ─────────────────────────────────────────────────────────────
     oid = place_order(signal, qty, p, sl, tp)
     if oid:
-        state['position'] = {'type': signal, 'entry': p, 'sl': sl, 'tp': tp, 'qty': qty,
-                             'time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
-                             'order_id': oid, 'ai_action': _ai_act, 'ai_shadow': ai_shadow_master,
-                             'ai_confidence': (_ai_res.confidence if _ai_res else 0),
-                             'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
-        state['last_signal'] = signal; state['last_signal_time'] = datetime.now(timezone.utc).strftime('%H:%M UTC')
+        with lock:
+            state['position'] = {'type': signal, 'entry': p, 'sl': sl, 'tp': tp, 'qty': qty,
+                                 'time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                                 'order_id': oid, 'ai_action': _ai_act, 'ai_shadow': ai_shadow_master,
+                                 'ai_confidence': (_ai_res.confidence if _ai_res else 0),
+                                 'ai_reasoning': (_json.dumps(_ai_res.reasoning) if _ai_res and _ai_res.reasoning else "")}
+            state['last_signal'] = signal; state['last_signal_time'] = datetime.now(timezone.utc).strftime('%H:%M UTC')
         save_state()
         send_telegram(f"{'🔴' if signal == 'SHORT' else '🟢'} <b>[C] {signal}</b>\nEntry: ${p:,.2f} | TP: ${tp:,.2f} | SL: ${sl:,.2f}")
         send_ai_summary("C", signal, p, sl, tp, _ai_act, _ai_res, ai_shadow_master)
@@ -144,6 +150,7 @@ def check_position(deps, state, price):
     finalize      = deps["finalize"]
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
+    lock          = deps.get("lock") or _NULL
     cfg           = CONFIG
 
     pos = state["position"]
@@ -163,7 +170,8 @@ def check_position(deps, state, price):
     if tp_dist > 0 and not pos.get("phase1_done"):
         progress = ((price - entry) / tp_dist) if is_long else ((entry - price) / tp_dist)
         if progress >= cfg["phase1_progress"]:
-            pos["sl"] = entry; pos["phase1_done"] = True
+            with lock:
+                pos["sl"] = entry; pos["phase1_done"] = True
             log.info(f"[C] Phase 1: SL -> entry @ {entry:.2f}")
             send_telegram(f"🔒 <b>[C] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state()
@@ -174,10 +182,11 @@ def check_position(deps, state, price):
         if not state.get("trailing_enabled", True):
             finalize(tp, "WIN", "TAKE PROFIT")
             return
-        pos["trailing_active"] = True
         init_tsl = round(price * (1 - cfg["trailing_distance"]), 2) if is_long else round(price * (1 + cfg["trailing_distance"]), 2)
-        pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
-        pos["trailing_peak"] = price
+        with lock:
+            pos["trailing_active"] = True
+            pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
+            pos["trailing_peak"] = price
         log.info(f"[C] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
         send_telegram(f"🚀 <b>[C] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
         save_state()
@@ -188,18 +197,20 @@ def check_position(deps, state, price):
         peak = pos.get("trailing_peak", price)
         if is_long:
             if price > peak:
-                pos["trailing_peak"] = price
                 new_tsl = round(price * (1 - cfg["trailing_distance"]), 2)
-                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
+                with lock:
+                    pos["trailing_peak"] = price
+                    pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
                 save_state()
             if price <= pos["trailing_sl"]:
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         else:
             if price < peak:
-                pos["trailing_peak"] = price
                 new_tsl = round(price * (1 + cfg["trailing_distance"]), 2)
-                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
+                with lock:
+                    pos["trailing_peak"] = price
+                    pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
                 save_state()
             if price >= pos["trailing_sl"]:
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")

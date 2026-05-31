@@ -28,12 +28,16 @@ SL/TP math (R/R 2:1), sizing, RSI thresholds ή exit behaviour — μόνο δο
 Οι παράμετροι της B (RSI=70 / R:R=2.0) είναι off-limits ανά το HANDOFF.
 """
 
+import contextlib
 import json
 import logging
 import os
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+# deps["lock"] = per-strategy RLock (live). Στα tests (χωρίς lock) → nullcontext.
+_NULL = contextlib.nullcontext()
 
 # ── Configuration ─────────────────────────────────────────────
 # Named constants για τα magic numbers του exit model. Οι τιμές είναι
@@ -60,6 +64,7 @@ def check_position(deps, state, price):
     finalize      = deps["finalize"]
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
+    lock          = deps.get("lock") or _NULL
     cfg           = CONFIG
 
     pos = state["position"]
@@ -79,7 +84,8 @@ def check_position(deps, state, price):
     if tp_dist > 0 and not pos.get("phase1_done"):
         progress = ((price - entry) / tp_dist) if is_long else ((entry - price) / tp_dist)
         if progress >= cfg["phase1_progress"]:
-            pos["sl"] = entry; pos["phase1_done"] = True
+            with lock:
+                pos["sl"] = entry; pos["phase1_done"] = True
             log.info(f"[B] Phase 1: SL -> entry @ {entry:.2f}")
             send_telegram(f"🔒 <b>[B] BREAK EVEN</b>\nSL moved to ${entry:,.2f}")
             save_state()
@@ -90,10 +96,11 @@ def check_position(deps, state, price):
         if not state.get("trailing_enabled", True):
             finalize(tp, "WIN", "TAKE PROFIT")
             return
-        pos["trailing_active"] = True
         init_tsl = round(price * (1 - cfg["trailing_distance"]), 2) if is_long else round(price * (1 + cfg["trailing_distance"]), 2)
-        pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
-        pos["trailing_peak"] = price
+        with lock:
+            pos["trailing_active"] = True
+            pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
+            pos["trailing_peak"] = price
         log.info(f"[B] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
         send_telegram(f"🚀 <b>[B] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
         save_state()
@@ -104,18 +111,20 @@ def check_position(deps, state, price):
         peak = pos.get("trailing_peak", price)
         if is_long:
             if price > peak:
-                pos["trailing_peak"] = price
                 new_tsl = round(price * (1 - cfg["trailing_distance"]), 2)
-                pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
+                with lock:
+                    pos["trailing_peak"] = price
+                    pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
                 save_state()
             if price <= pos["trailing_sl"]:
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         else:
             if price < peak:
-                pos["trailing_peak"] = price
                 new_tsl = round(price * (1 + cfg["trailing_distance"]), 2)
-                pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
+                with lock:
+                    pos["trailing_peak"] = price
+                    pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
                 save_state()
             if price >= pos["trailing_sl"]:
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
@@ -166,6 +175,7 @@ def on_tick(deps, state, price):
     trading_mode      = deps.get("trading_mode", "PAPER")
     risk_per_trade    = deps["risk_per_trade"]
     ai_shadow_master  = deps["ai_shadow_master"]
+    lock              = deps.get("lock") or _NULL
 
     rsi_15m = rt.rsi_15m
 
@@ -230,14 +240,16 @@ def on_tick(deps, state, price):
         # ─────────────────────────────────────────────────────
         order_id = place_order_paper("SHORT", qty, price, sl, tp) if trading_mode == "PAPER" else place_order_live("SHORT", qty, sl, tp)
         if order_id:
-            state["position"] = {"type": "SHORT", "entry": price, "sl": sl, "tp": tp, "qty": qty,
-                                   "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id": order_id, "has_divergence": bear_div,
-                                   "ai_action": ai_action, "ai_shadow": ai_shadow_master,
-                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
-                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
+            with lock:
+                state["position"] = {"type": "SHORT", "entry": price, "sl": sl, "tp": tp, "qty": qty,
+                                       "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                                       "order_id": order_id, "has_divergence": bear_div,
+                                       "ai_action": ai_action, "ai_shadow": ai_shadow_master,
+                                       "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                       "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             send_ai_summary("B", "SHORT", price, sl, tp, ai_action, _ai_result, ai_shadow_master)
-            state["last_signal"] = "SHORT"; state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            with lock:
+                state["last_signal"] = "SHORT"; state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🔴 <b>[B] SHORT</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bear_div else ''}")
         _entering = False
@@ -266,14 +278,16 @@ def on_tick(deps, state, price):
         # ─────────────────────────────────────────────────────
         order_id = place_order_paper("LONG", qty, price, sl, tp) if trading_mode == "PAPER" else place_order_live("LONG", qty, sl, tp)
         if order_id:
-            state["position"] = {"type": "LONG", "entry": price, "sl": sl, "tp": tp, "qty": qty,
-                                   "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                                   "order_id": order_id, "has_divergence": bull_div,
-                                   "ai_action": ai_action, "ai_shadow": ai_shadow_master,
-                                   "ai_confidence": (_ai_result.confidence if _ai_result else 0),
-                                   "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
+            with lock:
+                state["position"] = {"type": "LONG", "entry": price, "sl": sl, "tp": tp, "qty": qty,
+                                       "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                                       "order_id": order_id, "has_divergence": bull_div,
+                                       "ai_action": ai_action, "ai_shadow": ai_shadow_master,
+                                       "ai_confidence": (_ai_result.confidence if _ai_result else 0),
+                                       "ai_reasoning": (json.dumps(_ai_result.reasoning) if _ai_result and _ai_result.reasoning else "")}
             send_ai_summary("B", "LONG", price, sl, tp, ai_action, _ai_result, ai_shadow_master)
-            state["last_signal"] = "LONG"; state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            with lock:
+                state["last_signal"] = "LONG"; state["last_signal_time"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
             save_state()
             send_telegram(f"🟢 <b>[B] LONG</b>\nEntry:${price:,.2f} TP:${tp:,.2f} SL:${sl:,.2f}\nR/R 2:1 {'🔥DIV' if bull_div else ''}")
         _entering = False
