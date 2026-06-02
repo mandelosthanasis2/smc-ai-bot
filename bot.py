@@ -524,6 +524,25 @@ def detect_divergence(closes_list, highs, lows, lookback=20):
     if bull: log.info(f"Bullish div: price {pl[-2]:.0f}->{pl[-1]:.0f} RSI {rl[-2]:.1f}->{rl[-1]:.1f}")
     return bull, bear
 
+def detect_divergence_b(closes, highs, lows, window=5):
+    """
+    Strategy-B-specific divergence: causal ±window swing detection.
+
+    Διαφέρει από το detect_divergence (που το μοιράζονται A/main) — εκείνο
+    χρησιμοποιεί ±1 pivots. Η B v2 θέλει confirmed ±5 swings, χωρίς look-ahead
+    (HANDOFF). Κρατιέται ξεχωριστή ώστε να μην αλλάξει σιωπηλά η συμπεριφορά
+    της A. Τα closes/highs/lows πρέπει να είναι aligned by candle index.
+
+    Χτίζει causal RSI series (RSI όπως ήταν στο close κάθε κεριού) και delegate
+    στο strategies.strategy_b.swing_divergence.
+    """
+    from strategies.strategy_b import swing_divergence
+    n = min(len(closes), len(highs), len(lows))
+    if n < 2 * window + 2:
+        return False, False
+    rsi_series = [rt._calc_rsi(closes[:i + 1]) for i in range(n)]
+    return swing_divergence(highs[:n], lows[:n], rsi_series, window)
+
 def find_4h_sr(candles_4h, price, lookback=50):
     recent = candles_4h[-lookback:] if len(candles_4h)>lookback else candles_4h
     highs, lows = [], []
@@ -600,7 +619,10 @@ DEFAULT_STATE = {
 }
 
 DEFAULT_STATE_B = {
-    "position": None, "last_signal": "Starting...", "last_signal_time": "",
+    "position": None,          # Phase-1 compat mirror (= positions[0] or None)
+    "positions": [],           # v2 multi-position: up to CONFIG["max_positions"]
+    "last_entry_candle_ts": None,  # candle-close gate marker
+    "last_signal": "Starting...", "last_signal_time": "",
     "trades": [], "balance": 10000.0, "pnl_total": 0.0,
     "wins": 0, "losses": 0, "box": None, "current_rsi": 50.0,
     "current_price": 0.0, "last_cycle": "", "errors": [], "last_divergence": False,
@@ -1077,14 +1099,16 @@ def finalize_trade_a(price, result, note=""):
 # Καλείται εσωτερικά από το strategy_a.on_tick μέσω deps["finalize"]/deps[...].
 
 # =================================================================
-# POSITION MANAGEMENT - Strategy B (2 phases)
+# POSITION MANAGEMENT - Strategy B (v2: multi-position, 0.3% trailing, no BE)
 # =================================================================
 
-def finalize_trade_b(price, result, note=""):
-    pos = state_b["position"]
+def finalize_trade_b(price, result, note="", pos=None):
+    # v2 multi-position: το `pos` προσδιορίζει ΠΟΙΑ θέση κλείνει. Legacy fallback
+    # (pos=None) → η μοναδική state_b["position"] (για συμβατότητα).
+    if pos is None:
+        pos = state_b.get("position")
     if not pos: return
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
-    # BREAK EVEN: δεν μετράει ούτε win ούτε loss
     trade_b = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
         "pnl": pnl, "result": result,
@@ -1102,7 +1126,14 @@ def finalize_trade_b(price, result, note=""):
         elif result == "LOSS": state_b["losses"] += 1
         state_b["trades"].append(trade_b)
         wins=state_b["wins"]; losses=state_b["losses"]; bal=state_b["balance"]
-        state_b["position"] = None
+        # Αφαίρεση της κλειστής θέσης από τη λίστα (multi-position)
+        positions = state_b.get("positions")
+        if isinstance(positions, list) and pos in positions:
+            positions.remove(pos)
+        else:
+            state_b["position"] = None
+        # Phase-1 mirror: το dashboard/DB δείχνουν ακόμα single position
+        state_b["position"] = state_b["positions"][0] if state_b.get("positions") else None
     emoji = "✅" if result=="WIN" else "❌"
     db_save_trade("B", trade_b)
     send_telegram(
@@ -1209,7 +1240,7 @@ def run_strategy_b():
         "rt":                rt,
         "get_candles":       get_candles,
         "build_1h_box":      build_1h_box,
-        "detect_divergence": detect_divergence,
+        "detect_divergence": detect_divergence_b,   # B-specific causal ±5 swings
         "calc_qty":          calc_qty,
         "place_order":       place_order_paper,
         "place_order_live":  place_order_live,
@@ -1219,7 +1250,7 @@ def run_strategy_b():
         "save_state":        save_state_b,
         "send_ai_summary":   _send_ai_trade_summary,
         "trading_mode":      TRADING_MODE,
-        "risk_per_trade":    RISK_PER_TRADE,
+        "risk_per_trade":    RISK_PER_TRADE_B,       # 0.5% base (×2 on divergence)
         "ai_shadow_master":  AI_SHADOW_MASTER,
         "lock":              state_lock_b,
     }

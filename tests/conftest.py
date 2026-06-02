@@ -54,12 +54,15 @@ class OrderRecorder:
         )
         return oid
 
-    def finalize(self, price, result, note=""):
-        pos = self.state.get("position")
-        if not pos:
+    def finalize(self, price, result, note="", pos=None):
+        # Multi-position aware (Strategy B v2): when `pos` is given, close THAT
+        # position and remove it from state["positions"]. Legacy single-position
+        # strategies (A/C/SMC/CM) call finalize without `pos`.
+        target = pos if pos is not None else self.state.get("position")
+        if not target:
             return
-        is_long = pos["type"] == "LONG"
-        pnl = round(((price - pos["entry"]) if is_long else (pos["entry"] - price)) * pos["qty"], 2)
+        is_long = target["type"] == "LONG"
+        pnl = round(((price - target["entry"]) if is_long else (target["entry"] - price)) * target["qty"], 2)
         self.state["balance"] = round(self.state["balance"] + pnl, 2)
         self.state["pnl_total"] = round(self.state["pnl_total"] + pnl, 2)
         if result == "WIN":
@@ -67,7 +70,12 @@ class OrderRecorder:
         elif result == "LOSS":
             self.state["losses"] += 1
         self.finals.append({"price": price, "result": result, "note": note, "pnl": pnl})
-        self.state["position"] = None
+        positions = self.state.get("positions")
+        if pos is not None and isinstance(positions, list) and target in positions:
+            positions.remove(target)
+            self.state["position"] = positions[0] if positions else None
+        else:
+            self.state["position"] = None
 
     def finalize_partial(self, close_price, partial_qty, partial_pnl, note=""):
         self.state["balance"] = round(self.state["balance"] + partial_pnl, 2)
@@ -89,6 +97,7 @@ def fresh_state():
     """A clean strategy state dict with a known starting balance."""
     return {
         "position": None,
+        "positions": [],
         "balance": 10_000.0,
         "pnl_total": 0.0,
         "wins": 0,
