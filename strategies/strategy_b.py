@@ -131,19 +131,21 @@ def _ensure_positions(state):
     """
     Εξασφαλίζει ότι το state έχει λίστα state["positions"]. Migrates legacy
     single-position state (state["position"]) σε λίστα — ώστε φορτωμένο παλιό
-    state (από DB/JSON) να μη χαθεί στο πρώτο tick.
+    state (από DB/JSON, πριν το positions JSONB column) να μη χαθεί στο 1ο tick.
     """
     if not isinstance(state.get("positions"), list):
         legacy = state.get("position")
         state["positions"] = [legacy] if legacy else []
+    elif not state["positions"] and state.get("position"):
+        # κενή λίστα αλλά υπάρχει legacy single position (παλιό DB row) → migrate
+        state["positions"] = [state["position"]]
 
 
 def _sync_legacy_mirror(state):
     """
-    Phase-1 backward-compat: το dashboard (main.py) και το DB save serializεπουν
-    ακόμα το single state["position"]. Καθρεφτίζουμε την ΠΡΩΤΗ ανοιχτή θέση εκεί,
-    ώστε να μη γίνει regression το UI όσο το Phase 2 (multi-position UI + DB
-    array schema) δεν έχει γίνει ακόμα.
+    Backward-compat mirror: το DB κρατά ακόμα το legacy single `position` column
+    (δίπλα στο νέο `positions` JSONB array), ο header badge έχει fallback σε αυτό,
+    και τυχόν παλιοί readers το περιμένουν. Καθρεφτίζουμε την ΠΡΩΤΗ ανοιχτή θέση.
     """
     state["position"] = state["positions"][0] if state["positions"] else None
 
@@ -283,7 +285,7 @@ def on_tick(deps, state, price):
     κλείσιμο 15m κεριού (candle-close gate), μέχρι το cap των 3.
 
     deps: {
-        rt, get_candles, build_1h_box, detect_divergence, calc_qty,
+        rt, get_candles, build_1h_box, detect_divergence, calc_qty, calc_rsi,
         place_order, place_order_live, send_telegram, ai_validate,
         finalize, save_state, send_ai_summary,
         trading_mode, risk_per_trade, ai_shadow_master, lock
@@ -296,10 +298,11 @@ def on_tick(deps, state, price):
     build_1h_box      = deps["build_1h_box"]
     detect_divergence = deps["detect_divergence"]
     calc_qty          = deps["calc_qty"]
+    calc_rsi          = deps.get("calc_rsi")   # RSI επί ΚΛΕΙΣΤΩΝ κεριών (entry)
     ai_validate       = deps["ai_validate"]
     risk_per_trade    = deps["risk_per_trade"]
 
-    rsi_15m = rt.rsi_15m
+    rsi_15m = rt.rsi_15m                       # live RSI (forming candle) — display
     state["current_rsi"]   = rsi_15m
     state["current_price"] = price  # needed for dashboard unrealised PnL
 
@@ -339,12 +342,22 @@ def on_tick(deps, state, price):
     # Νέο κλειστό κερί → καταγραφή ώστε να μην ξανα-αξιολογηθεί το ίδιο κερί
     state["last_entry_candle_ts"] = closed_ts
 
-    # Divergence (causal ±5 swing) — υπολογίζεται μόνο στο close
-    if candles_15m:
-        highs  = [c["high"]  for c in candles_15m]
-        lows   = [c["low"]   for c in candles_15m]
-        closes = [c["close"] for c in candles_15m]
-        bull_div, bear_div = detect_divergence(closes, highs, lows)
+    # ── Entry RSI επί ΚΛΕΙΣΤΩΝ κεριών (όχι το live rt.rsi_15m που έχει το forming
+    # candle με live price). Εξαλείφει το drift backtest-vs-live: το backtest
+    # κρίνει στο close, εδώ κρίνουμε κι εμείς στο close. candles_15m[-1] είναι το
+    # forming κερί → το αφαιρούμε. ──
+    closed_15m = candles_15m[:-1] if candles_15m else []
+    closed_closes = [c["close"] for c in closed_15m]
+    if calc_rsi and len(closed_closes) >= 15:
+        rsi_entry = calc_rsi(closed_closes)
+    else:
+        rsi_entry = rsi_15m   # fallback (λίγα κεριά ή χωρίς calc_rsi)
+
+    # Divergence (causal ±5 swing) — μόνο στο close, πάνω σε ΚΛΕΙΣΤΑ κεριά
+    if closed_15m:
+        highs  = [c["high"] for c in closed_15m]
+        lows   = [c["low"]  for c in closed_15m]
+        bull_div, bear_div = detect_divergence(closed_closes, highs, lows)
     else:
         bull_div = bear_div = False
     state["last_divergence"] = bull_div or bear_div
@@ -355,15 +368,15 @@ def on_tick(deps, state, price):
         return
 
     balance = state["balance"]
-    log.info(f"[B] Price={price:.2f} RSI15m={rsi_15m} 1H=[{box['low']:.0f}-{box['high']:.0f}] "
-             f"open={open_n}/{CONFIG['max_positions']}")
+    log.info(f"[B] Price={price:.2f} RSI_close={rsi_entry} (live={rsi_15m}) "
+             f"1H=[{box['low']:.0f}-{box['high']:.0f}] open={open_n}/{CONFIG['max_positions']}")
 
     if _entering:
         return  # race-condition guard (αργό AI call)
 
     # ── SHORT at 1H High ──
     at_high = (price >= box["high"] * 0.995) and (price <= box["high"] * 1.015)
-    if at_high and rsi_15m > 70 and box["mid"] < price:
+    if at_high and rsi_entry > 70 and box["mid"] < price:
         tp_dist  = price - box["mid"]
         sl_dist  = tp_dist / 2
         tp       = box["mid"]; sl = round(price + sl_dist, 2)
@@ -390,7 +403,7 @@ def on_tick(deps, state, price):
 
     # ── LONG at 1H Low ──
     at_low = (price <= box["low"] * 1.005) and (price >= box["low"] * 0.985)
-    if at_low and rsi_15m < 30 and box["mid"] > price:
+    if at_low and rsi_entry < 30 and box["mid"] > price:
         tp_dist  = box["mid"] - price
         sl_dist  = tp_dist / 2
         tp       = box["mid"]; sl = round(price - sl_dist, 2)

@@ -3,9 +3,15 @@ main.py — NRM Bot v2
 New design: sidebar, cards, mobile-first, no TradingView
 """
 
+import logging
 import os
 import threading
 from flask import Flask, render_template_string, jsonify, session
+
+# Module logger. main.py imports bot.py (which configures logging), so this
+# just attaches to the existing root config. Previously `log` was referenced in
+# _reset_trades_db and the D webhook handler without being defined → NameError.
+log = logging.getLogger(__name__)
 from bot import state, state_b, state_c, state_d, state_cm, state_smc, bot_thread
 from bot import snapshot_state, state_lock, state_lock_b, state_lock_c, state_lock_d, state_lock_smc
 from config import PORT
@@ -490,7 +496,7 @@ TMPL = """<!DOCTYPE html>
   <div style="display:flex;align-items:center;gap:10px">
     <div class="tb-title">Strategy {{ sl }}</div>
     <span class="bx {{ 'bx-paper' if mode=='PAPER' else 'bx-live' }}"><span class="ld"></span>{{ mode }}</span>
-    {% if position %}<span class="bx {{ 'bx-g' if position.type=='LONG' else 'bx-r' }}">{{ position.type }} OPEN</span>{% endif %}
+    {% if positions and positions|length > 1 %}<span class="bx bx-g">{{ positions|length }} OPEN</span>{% elif position %}<span class="bx {{ 'bx-g' if position.type=='LONG' else 'bx-r' }}">{{ position.type }} OPEN</span>{% endif %}
   </div>
   <div class="tb-r">
     <span class="bx bx-gray">BTCUSDT PERP</span>
@@ -578,9 +584,9 @@ TMPL = """<!DOCTYPE html>
 </div>
 
 <div class="br">
-  {% if position %}
-  <div class="cd" id="pos-s">
-    <div class="cd-hd"><div class="cd-tt">Open Position</div><span class="pi {{ 'pi-lo' if position.type=='LONG' else 'pi-sh' }}">{{ position.type }}</span></div>
+  {% macro poscard(position, idx=0, total=1) %}
+  <div class="cd">
+    <div class="cd-hd"><div class="cd-tt">Open Position{{ ' #' ~ idx if total > 1 else '' }}</div><span class="pi {{ 'pi-lo' if position.type=='LONG' else 'pi-sh' }}">{{ position.type }}</span></div>
     <div>
       <div class="pr"><span class="pk">Entry</span><span class="pv">${{ "{:,.2f}".format(position.entry) }}</span></div>
       {% if position.tp is defined and position.tp1 is not defined %}<div class="pr"><span class="pk">Take Profit</span><span class="pv tg">${{ "{:,.2f}".format(position.tp) }}</span></div>{% endif %}
@@ -599,6 +605,11 @@ TMPL = """<!DOCTYPE html>
       {% if position.has_confluence %}<div class="pr"><span class="pk">Confluence</span><span class="pv tte">🔥 Strong</span></div>{% endif %}
     </div>
   </div>
+  {% endmacro %}
+  {% if positions and positions|length > 0 %}
+  {% for p in positions %}{{ poscard(p, loop.index, positions|length) }}{% endfor %}
+  {% elif position %}
+  {{ poscard(position) }}
   {% else %}
   <div class="cd"><div style="padding:26px 14px;text-align:center;color:var(--t3);font-size:11px">No open position</div></div>
   {% endif %}
@@ -790,6 +801,7 @@ def render_dash(active, api_url, sc, s, extra={}):
         signal_time=s.get('last_signal_time',''),
         last_cycle=s.get('last_cycle',''),
         position=s.get('position'),
+        positions=s.get('positions'),
         box=s.get('box'),
         current_price=s.get('current_price',0),
         trades=s.get('trades',[]),

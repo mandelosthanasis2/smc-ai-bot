@@ -1257,6 +1257,7 @@ def run_strategy_b():
         "build_1h_box":      build_1h_box,
         "detect_divergence": detect_divergence_b,   # B-specific causal ±5 swings
         "calc_qty":          calc_qty,
+        "calc_rsi":          rt._calc_rsi,           # RSI επί κλειστών κεριών (entry)
         "place_order":       place_order_paper,
         "place_order_live":  place_order_live,
         "send_telegram":     send_telegram,

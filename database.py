@@ -155,6 +155,12 @@ def init_db():
             cur.execute("ALTER TABLE bot_state ALTER COLUMN strategy TYPE VARCHAR(4)")
             cur.execute("ALTER TABLE trades    ALTER COLUMN strategy TYPE VARCHAR(4)")
 
+            # Migration: multi-position persistence (Strategy B v2). Κρατά το PK
+            # (strategy, user_id) — η λίστα θέσεων μπαίνει σε ΕΝΑ JSONB array column.
+            # Παλιά single-position rows έχουν positions = NULL· ο loader παράγει
+            # [position] από αυτά (backward-compatible).
+            cur.execute("ALTER TABLE bot_state ADD COLUMN IF NOT EXISTS positions JSONB")
+
         conn.commit()
         log.info("DB schema ready ✓")
     except Exception as e:
@@ -465,6 +471,9 @@ def db_load_state(strategy: str, user_id: int = 1) -> dict | None:
             "wins":      row["wins"],
             "losses":    row["losses"],
             "position":  row["position"],
+            # Strategy B v2 multi-position. NULL (παλιά rows / άλλες στρατηγικές)
+            # → ο strategy_b._ensure_positions παράγει [position] στο 1ο tick.
+            "positions": row.get("positions"),
             "trades":    trades,
         }
     except Exception as e:
@@ -479,14 +488,15 @@ def db_save_state(strategy: str, state: dict, user_id: int = 1):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO bot_state (strategy, user_id, balance, pnl_total, wins, losses, position, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO bot_state (strategy, user_id, balance, pnl_total, wins, losses, position, positions, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (strategy, user_id) DO UPDATE SET
                     balance    = EXCLUDED.balance,
                     pnl_total  = EXCLUDED.pnl_total,
                     wins       = EXCLUDED.wins,
                     losses     = EXCLUDED.losses,
                     position   = EXCLUDED.position,
+                    positions  = EXCLUDED.positions,
                     updated_at = NOW()
             """, (
                 strategy, user_id,
@@ -495,6 +505,8 @@ def db_save_state(strategy: str, state: dict, user_id: int = 1):
                 state.get("wins", 0),
                 state.get("losses", 0),
                 json.dumps(state.get("position")) if state.get("position") else None,
+                # multi-position (Strategy B). Άλλες στρατηγικές δεν έχουν "positions" → NULL.
+                json.dumps(state.get("positions")) if state.get("positions") else None,
             ))
         conn.commit()
     except Exception as e:

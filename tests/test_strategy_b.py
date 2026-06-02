@@ -184,6 +184,8 @@ def _entry_deps(rec, rt, box, **over):
         "build_1h_box": lambda c1h: box,
         "detect_divergence": lambda closes, highs, lows: (False, False),
         "calc_qty": lambda bal, risk, entry, sl: 0.5,
+        # close-candle RSI: echo rt.rsi_15m so tests keep controlling RSI via rt
+        "calc_rsi": lambda closes: rt.rsi_15m,
         "place_order": rec.place_order,
         "place_order_live": lambda *a, **k: None,
         "send_telegram": rec.send_telegram,
@@ -254,6 +256,29 @@ class TestEntryWiring:
         assert fresh_state["positions"] == []
         assert fresh_state["last_signal"].startswith("WAIT")
 
+    def test_entry_uses_closed_candle_rsi_not_live(self, fresh_state):
+        # live rt.rsi_15m is neutral (50) — would NOT trigger — but the closed
+        # candle RSI (via calc_rsi) is 75 → SHORT must fire off the closed value.
+        rec = OrderRecorder(fresh_state)
+        rt = _FakeRT(price=100_000.0, rsi_15m=50.0)
+        box = {"high": 100_000.0, "low": 96_000.0, "mid": 98_000.0}
+        deps = _entry_deps(rec, rt, box, calc_rsi=lambda closes: 75.0)
+        B.on_tick(deps, fresh_state, 100_000.0)
+
+        assert len(fresh_state["positions"]) == 1
+        assert fresh_state["positions"][0]["type"] == "SHORT"
+
+    def test_live_rsi_alone_does_not_trigger(self, fresh_state):
+        # opposite: live RSI hot (75) but closed-candle RSI neutral (50) → no entry
+        rec = OrderRecorder(fresh_state)
+        rt = _FakeRT(price=100_000.0, rsi_15m=75.0)
+        box = {"high": 100_000.0, "low": 96_000.0, "mid": 98_000.0}
+        deps = _entry_deps(rec, rt, box, calc_rsi=lambda closes: 50.0)
+        B.on_tick(deps, fresh_state, 100_000.0)
+
+        assert fresh_state["positions"] == []
+        assert fresh_state["last_signal"].startswith("WAIT")
+
     def test_divergence_doubles_risk(self, fresh_state):
         # bearish divergence on a SHORT setup → risk passed to calc_qty is 2× base
         seen = {}
@@ -318,6 +343,35 @@ class TestCandleCloseGate:
 
         assert len(fresh_state["positions"]) == 3          # unchanged
         assert fresh_state["last_signal"].startswith("CAP")
+
+
+# ── load migration (_ensure_positions) ───────────────────────────────────
+
+@pytest.mark.strategy
+class TestEnsurePositions:
+    def test_none_with_legacy_position_migrates(self):
+        pos = _open_long()
+        st = {"position": pos}                    # no "positions" key (old JSON)
+        B._ensure_positions(st)
+        assert st["positions"] == [pos]
+
+    def test_empty_list_with_legacy_position_migrates(self):
+        # old DB row: positions column NULL -> loader gives [], but position set
+        pos = _open_short()
+        st = {"position": pos, "positions": []}
+        B._ensure_positions(st)
+        assert st["positions"] == [pos]
+
+    def test_empty_list_no_legacy_stays_empty(self):
+        st = {"position": None, "positions": []}
+        B._ensure_positions(st)
+        assert st["positions"] == []
+
+    def test_existing_list_is_preserved(self):
+        a, b = _open_long(), _open_short()
+        st = {"position": a, "positions": [a, b]}
+        B._ensure_positions(st)
+        assert st["positions"] == [a, b]
 
 
 # ── causal ±5 swing divergence (pure function) ────────────────────────────
