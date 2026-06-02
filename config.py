@@ -19,7 +19,12 @@ TRADING_MODE       = os.environ.get("TRADING_MODE", "PAPER")   # "PAPER" or "LIV
 SYMBOL         = "BTCUSDT"          # Bitget v2 symbol (no suffix needed)
 TIMEFRAME_1H   = "1H"
 TIMEFRAME_1D   = "1D"
-RISK_PER_TRADE = 0.02   # 2% risk per trade
+RISK_PER_TRADE = 0.02   # 2% risk per trade (Strategies A / C / SMC / CM)
+# Strategy B runs its own, much smaller risk. The Strategy-B refactor backtests
+# showed 0.5% is the ONLY survivable risk at a concurrent cap of 3 (anything
+# higher pushed max drawdown past ~25% / margin-call territory). Kept separate
+# from the global RISK_PER_TRADE so tuning B never silently changes the others.
+RISK_PER_TRADE_B = 0.005   # 0.5% base risk per B trade (×2 → 1% on divergence)
 LEVERAGE = int(os.environ.get("LEVERAGE", 1))
 
 # ── SMC STRATEGY RULES ───────────────────────────────────────────
