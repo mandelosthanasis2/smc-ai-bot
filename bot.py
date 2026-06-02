@@ -320,6 +320,7 @@ class RealtimeData:
         self.rsi_1h      = 50.0
         self.rsi_15m     = 50.0
         self.initialized = False
+        self.ws          = None   # live WebSocketApp (for the heartbeat thread)
 
     def _calc_rsi(self, closes, period=14):
         """
@@ -395,6 +396,11 @@ class RealtimeData:
 
     def on_ws_message(self, ws, message):
         try:
+            # Bitget app-level heartbeat reply is plain text "pong" (and we may
+            # echo "ping") — not JSON. Handle before json.loads so it doesn't
+            # spam "WS parse error".
+            if isinstance(message, str) and message.strip() in ("pong", "ping"):
+                return
             data = json.loads(message)
             if "data" not in data:
                 return
@@ -443,6 +449,7 @@ class RealtimeData:
                         on_error   = lambda ws, e: log.error(f"WS error: {e}"),
                         on_close   = lambda ws, *a: log.warning("WS closed - reconnecting"),
                     )
+                    self.ws = ws  # expose to the heartbeat thread
                     ws.run_forever(
                         ping_interval=15,
                         ping_timeout=8,
@@ -450,20 +457,28 @@ class RealtimeData:
                     )
                 except Exception as e:  # broad on purpose: reconnect loop must never die
                     log.error(f"WS run error: {e}")
+                finally:
+                    self.ws = None
                 time.sleep(3)
 
         threading.Thread(target=run, daemon=True).start()
 
-        # Bitget requires a ping every 30s to keep connection alive
+        # Bitget keepalive: the server expects an APPLICATION-LEVEL "ping" text
+        # frame (it replies "pong"). The websocket protocol ping above is NOT
+        # Bitget's heartbeat — without this, Bitget drops the connection after its
+        # grace window (the ~2-3 min reconnect sawtooth seen in the deploy logs).
+        # Send every 20s (Bitget's limit is 30s); a failed send surfaces a dead
+        # socket so run_forever can reconnect.
         def keep_alive():
-            import time as t
             while True:
-                t.sleep(25)
+                time.sleep(20)
+                ws = self.ws
+                if ws is None:
+                    continue
                 try:
-                    # Polling handles price updates when WS is down
-                    pass
-                except Exception:
-                    pass
+                    ws.send("ping")
+                except Exception as e:  # broad on purpose: dead socket → reconnect handles it
+                    log.warning(f"WS heartbeat send failed: {e}")
 
         threading.Thread(target=keep_alive, daemon=True).start()
         log.info("WebSocket started")
