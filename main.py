@@ -3,9 +3,15 @@ main.py — NRM Bot v2
 New design: sidebar, cards, mobile-first, no TradingView
 """
 
+import logging
 import os
 import threading
 from flask import Flask, render_template_string, jsonify, session
+
+# Module logger. main.py imports bot.py (which configures logging), so this
+# just attaches to the existing root config. Previously `log` was referenced in
+# _reset_trades_db and the D webhook handler without being defined → NameError.
+log = logging.getLogger(__name__)
 from bot import state, state_b, state_c, state_d, state_cm, state_smc, bot_thread
 from bot import snapshot_state, state_lock, state_lock_b, state_lock_c, state_lock_d, state_lock_smc
 from config import PORT
