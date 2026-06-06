@@ -18,6 +18,9 @@ anthropic==0.69.0
 # Auth (password hashing)
 bcrypt==4.2.0
 
+# At-rest encryption for dashboard-entered Bitget API keys (secrets_vault.py)
+cryptography==43.0.1
+
 # News briefing feeds
 feedparser==6.0.11
 

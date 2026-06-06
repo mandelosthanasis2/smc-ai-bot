@@ -328,17 +328,24 @@ SETTINGS_HTML = """
       <div class="section">
         <div class="section-title">EXCHANGE — BITGET</div>
         <div class="card" style="padding:20px;">
-          <div class="input-group">
-            <label>API Key</label>
-            <input type="text" name="bitget_api_key" value="{{ s.bitget_api_key or '' }}" placeholder="Bitget API key">
+          <div style="font-size:11px;color:var(--t3,#888);margin-bottom:12px;">
+            🔒 Τα keys αποθηκεύονται <b>κρυπτογραφημένα</b> και δεν εμφανίζονται ποτέ ξανά.
+            Άφησε ένα πεδίο <b>κενό</b> για να κρατήσεις το υπάρχον.
           </div>
           <div class="input-group">
-            <label>Secret Key</label>
-            <input type="password" name="bitget_secret_key" value="{{ s.bitget_secret_key or '' }}" placeholder="Bitget secret key">
+            <label>API Key {% if s.has_bitget_api_key %}<span style="color:#00e5a0">✓ saved {{ s.bitget_api_key_masked }}</span>{% endif %}</label>
+            <input type="text" name="bitget_api_key" value="" autocomplete="off"
+                   placeholder="{{ 'leave blank to keep' if s.has_bitget_api_key else 'Bitget API key' }}">
+          </div>
+          <div class="input-group">
+            <label>Secret Key {% if s.has_bitget_secret_key %}<span style="color:#00e5a0">✓ saved</span>{% endif %}</label>
+            <input type="password" name="bitget_secret_key" value="" autocomplete="new-password"
+                   placeholder="{{ 'leave blank to keep' if s.has_bitget_secret_key else 'Bitget secret key' }}">
           </div>
           <div class="input-group" style="margin-bottom:0;">
-            <label>Passphrase</label>
-            <input type="password" name="bitget_passphrase" value="{{ s.bitget_passphrase or '' }}" placeholder="Bitget passphrase">
+            <label>Passphrase {% if s.has_bitget_passphrase %}<span style="color:#00e5a0">✓ saved</span>{% endif %}</label>
+            <input type="password" name="bitget_passphrase" value="" autocomplete="new-password"
+                   placeholder="{{ 'leave blank to keep' if s.has_bitget_passphrase else 'Bitget passphrase' }}">
           </div>
         </div>
       </div>
@@ -559,9 +566,11 @@ def settings():
     from database import get_user_by_id
     user = get_user_by_id(user_id) or {}
     s = get_user_settings(user_id) or {}
-    s.setdefault('bitget_api_key', '')
-    s.setdefault('bitget_secret_key', '')
-    s.setdefault('bitget_passphrase', '')
+    # ΠΟΤΕ δεν προ-συμπληρώνουμε secrets — μόνο masked indicators.
+    s.setdefault('has_bitget_api_key', False)
+    s.setdefault('has_bitget_secret_key', False)
+    s.setdefault('has_bitget_passphrase', False)
+    s.setdefault('bitget_api_key_masked', '')
     s.setdefault('telegram_token', '')
     s.setdefault('telegram_chat_id', '')
     s.setdefault('risk_percent', 2.0)
@@ -590,7 +599,8 @@ def settings():
             'ai_shadow_mode':       'ai_shadow_mode' in request.form,
         }
         if save_user_settings(user_id, new_settings):
-            s = new_settings
+            # Re-fetch MASKED settings — ΠΟΤΕ μην ξαναδείξεις το plaintext που μόλις μπήκε.
+            s = get_user_settings(user_id) or {}
             success = 'Settings saved!'
         else:
             error = 'Failed to save settings.'

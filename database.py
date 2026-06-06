@@ -161,6 +161,15 @@ def init_db():
             # [position] από αυτά (backward-compatible).
             cur.execute("ALTER TABLE bot_state ADD COLUMN IF NOT EXISTS positions JSONB")
 
+            # Migration: ENCRYPTED Bitget API keys (secrets_vault). Τα παλιά
+            # plaintext columns (bitget_api_key/...) σταματούν να χρησιμοποιούνται·
+            # κρατάμε ciphertext (*_enc) + last4 (μόνο για masked display).
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bitget_api_key_enc    TEXT")
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bitget_secret_key_enc TEXT")
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bitget_passphrase_enc TEXT")
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bitget_api_key_last4  VARCHAR(8)")
+            _migrate_plaintext_keys(cur)
+
         conn.commit()
         log.info("DB schema ready ✓")
     except Exception as e:
@@ -262,14 +271,73 @@ def change_password(user_id: int, new_password: str) -> bool:
 # USER SETTINGS FUNCTIONS
 # =================================================================
 
+def _migrate_plaintext_keys(cur):
+    """One-time: encrypt τυχόν legacy plaintext Bitget keys και σβήσε το plaintext.
+    Αν λείπει το SECRETS_ENCRYPTION_KEY, ΑΦΗΣΕ τα ως έχουν (warn) — δεν θέλουμε να
+    χαθούν, και το live έτσι κι αλλιώς μένει PAPER μέχρι να οριστεί το key."""
+    import secrets_vault
+    try:
+        cur.execute("""
+            SELECT user_id, bitget_api_key, bitget_secret_key, bitget_passphrase
+            FROM user_settings
+            WHERE (bitget_api_key    IS NOT NULL AND bitget_api_key    <> '')
+               OR (bitget_secret_key IS NOT NULL AND bitget_secret_key <> '')
+               OR (bitget_passphrase IS NOT NULL AND bitget_passphrase <> '')
+        """)
+        rows = cur.fetchall()
+    except Exception as e:
+        log.warning(f"_migrate_plaintext_keys skipped: {type(e).__name__}")
+        return
+    if not rows:
+        return
+    if not secrets_vault.available():
+        log.warning("Legacy plaintext Bitget keys present but SECRETS_ENCRYPTION_KEY "
+                    "missing — NOT migrating. Set the key to secure & use them.")
+        return
+    for r in rows:
+        uid, api, sec, pph = r[0], r[1], r[2], r[3]
+        cur.execute("""
+            UPDATE user_settings SET
+                bitget_api_key_enc    = %s,
+                bitget_secret_key_enc = %s,
+                bitget_passphrase_enc = %s,
+                bitget_api_key_last4  = %s,
+                bitget_api_key = NULL, bitget_secret_key = NULL, bitget_passphrase = NULL
+            WHERE user_id = %s
+        """, (
+            secrets_vault.encrypt(api) if api else None,
+            secrets_vault.encrypt(sec) if sec else None,
+            secrets_vault.encrypt(pph) if pph else None,
+            (api[-4:] if api else None),
+            uid,
+        ))
+    log.info("Migrated %d legacy plaintext Bitget key row(s) to encrypted storage", len(rows))
+
+
 def get_user_settings(user_id: int) -> dict | None:
+    """Settings για το dashboard. ΠΟΤΕ δεν επιστρέφει secrets/ciphertext — μόνο
+    masked indicators (has_*, bitget_api_key_masked)."""
     conn = get_conn()
     if not conn: return None
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM user_settings WHERE user_id = %s", (user_id,))
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row: return None
+            d = dict(row)
+        last4   = d.get("bitget_api_key_last4")
+        has_api = bool(d.get("bitget_api_key_enc"))
+        has_sec = bool(d.get("bitget_secret_key_enc"))
+        has_pph = bool(d.get("bitget_passphrase_enc"))
+        # Strip ΟΛΑ τα secrets/ciphertext πριν επιστρέψει σε UI/API.
+        for k in ("bitget_api_key", "bitget_secret_key", "bitget_passphrase",
+                  "bitget_api_key_enc", "bitget_secret_key_enc", "bitget_passphrase_enc"):
+            d.pop(k, None)
+        d["has_bitget_api_key"]    = has_api
+        d["has_bitget_secret_key"] = has_sec
+        d["has_bitget_passphrase"] = has_pph
+        d["bitget_api_key_masked"] = ("••••" + last4) if (has_api and last4) else ""
+        return d
     except Exception as e:
         log.error(f"get_user_settings error: {e}")
         return None
@@ -277,21 +345,55 @@ def get_user_settings(user_id: int) -> dict | None:
         conn.close()
 
 def save_user_settings(user_id: int, settings: dict) -> bool:
+    """Αποθηκεύει settings. Τα Bitget keys κρυπτογραφούνται (secrets_vault). Κενό
+    πεδίο = ΚΡΑΤΑ το υπάρχον (preserve-on-blank). Plaintext columns → NULL πάντα."""
+    import secrets_vault
     conn = get_conn()
     if not conn: return False
     try:
         with conn.cursor() as cur:
+            cur.execute("""SELECT bitget_api_key_enc, bitget_secret_key_enc,
+                                  bitget_passphrase_enc, bitget_api_key_last4
+                           FROM user_settings WHERE user_id = %s""", (user_id,))
+            ex = cur.fetchone()
+        ex_api_enc, ex_sec_enc, ex_pph_enc, ex_last4 = ex if ex else (None, None, None, None)
+
+        def _resolve(newval, existing_enc):
+            """→ (enc, changed). Κενό = κράτα το υπάρχον. Vault μη-διαθέσιμο &
+            νέα τιμή = ΜΗΝ αποθηκεύσεις (no plaintext) — κράτα το υπάρχον."""
+            v = (newval or "").strip()
+            if not v:
+                return existing_enc, False
+            enc = secrets_vault.encrypt(v)
+            if enc is None:
+                log.error("save_user_settings: encryption unavailable — Bitget key NOT saved")
+                return existing_enc, False
+            return enc, True
+
+        api_enc, api_changed = _resolve(settings.get('bitget_api_key'),    ex_api_enc)
+        sec_enc, _           = _resolve(settings.get('bitget_secret_key'), ex_sec_enc)
+        pph_enc, _           = _resolve(settings.get('bitget_passphrase'), ex_pph_enc)
+        new_api = (settings.get('bitget_api_key') or "").strip()
+        last4   = new_api[-4:] if api_changed and new_api else ex_last4
+
+        with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO user_settings (
                     user_id, bitget_api_key, bitget_secret_key, bitget_passphrase,
+                    bitget_api_key_enc, bitget_secret_key_enc, bitget_passphrase_enc,
+                    bitget_api_key_last4,
                     telegram_token, telegram_chat_id, risk_percent,
                     strategy_a, strategy_b, strategy_c, strategy_d, trading_mode,
                     ai_validator_enabled, ai_shadow_mode
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, NULL, NULL, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
-                    bitget_api_key       = EXCLUDED.bitget_api_key,
-                    bitget_secret_key    = EXCLUDED.bitget_secret_key,
-                    bitget_passphrase    = EXCLUDED.bitget_passphrase,
+                    bitget_api_key        = NULL,
+                    bitget_secret_key     = NULL,
+                    bitget_passphrase     = NULL,
+                    bitget_api_key_enc    = EXCLUDED.bitget_api_key_enc,
+                    bitget_secret_key_enc = EXCLUDED.bitget_secret_key_enc,
+                    bitget_passphrase_enc = EXCLUDED.bitget_passphrase_enc,
+                    bitget_api_key_last4  = EXCLUDED.bitget_api_key_last4,
                     telegram_token       = EXCLUDED.telegram_token,
                     telegram_chat_id     = EXCLUDED.telegram_chat_id,
                     risk_percent         = EXCLUDED.risk_percent,
@@ -303,10 +405,7 @@ def save_user_settings(user_id: int, settings: dict) -> bool:
                     ai_validator_enabled = EXCLUDED.ai_validator_enabled,
                     ai_shadow_mode       = EXCLUDED.ai_shadow_mode
             """, (
-                user_id,
-                settings.get('bitget_api_key'),
-                settings.get('bitget_secret_key'),
-                settings.get('bitget_passphrase'),
+                user_id, api_enc, sec_enc, pph_enc, last4,
                 settings.get('telegram_token'),
                 settings.get('telegram_chat_id'),
                 settings.get('risk_percent', 2.0),
@@ -324,6 +423,32 @@ def save_user_settings(user_id: int, settings: dict) -> bool:
         log.error(f"save_user_settings error: {e}")
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+def get_live_credentials(user_id: int) -> dict | None:
+    """SERVER-ONLY: αποκρυπτογραφεί τα Bitget keys για live trading. ΠΟΤΕ μην το
+    καλέσεις από route/response/log. Returns {'api_key','secret','passphrase'} ή
+    None αν λείπουν / δεν αποκρυπτογραφούνται (fail-closed)."""
+    import secrets_vault
+    conn = get_conn()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT bitget_api_key_enc, bitget_secret_key_enc, bitget_passphrase_enc
+                           FROM user_settings WHERE user_id = %s""", (user_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        api = secrets_vault.decrypt(row[0]) if row[0] else None
+        sec = secrets_vault.decrypt(row[1]) if row[1] else None
+        pph = secrets_vault.decrypt(row[2]) if row[2] else None
+        if not (api and sec and pph):
+            return None
+        return {"api_key": api, "secret": sec, "passphrase": pph}
+    except Exception as e:
+        log.error(f"get_live_credentials error: {type(e).__name__}")
+        return None
     finally:
         conn.close()
 
