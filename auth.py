@@ -342,10 +342,18 @@ SETTINGS_HTML = """
             <input type="password" name="bitget_secret_key" value="" autocomplete="new-password"
                    placeholder="{{ 'leave blank to keep' if s.has_bitget_secret_key else 'Bitget secret key' }}">
           </div>
-          <div class="input-group" style="margin-bottom:0;">
+          <div class="input-group">
             <label>Passphrase {% if s.has_bitget_passphrase %}<span style="color:#00e5a0">✓ saved</span>{% endif %}</label>
             <input type="password" name="bitget_passphrase" value="" autocomplete="new-password"
                    placeholder="{{ 'leave blank to keep' if s.has_bitget_passphrase else 'Bitget passphrase' }}">
+          </div>
+          <div style="margin-bottom:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" onclick="testBitget(this)">Test connection</button>
+            <span id="bitget-test-result" style="font-size:13px;"></span>
+          </div>
+          <div style="font-size:11px;color:var(--t3,#888);margin-top:8px;">
+            Read-only έλεγχος (διαβάζει balance) — δεν στέλνει order, δεν ενεργοποιεί live.
+            Αποθήκευσε πρώτα τα keys.
           </div>
         </div>
       </div>
@@ -509,6 +517,25 @@ function requestLive() {
     .then(r => r.json())
     .then(d => { if(d.ok) location.reload(); });
 }
+function testBitget(btn) {
+  var el = document.getElementById('bitget-test-result');
+  el.style.color = '#888'; el.textContent = '⏳ testing…';
+  if (btn) btn.disabled = true;
+  fetch('/settings/test-bitget', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        el.style.color = '#00e5a0';
+        var bal = (d.available != null) ? ('$' + d.available + ' USDT available') : 'connected';
+        el.textContent = '✓ Connected — ' + bal;
+      } else {
+        el.style.color = '#ff5d5d';
+        el.textContent = '✗ ' + (d.msg || 'failed');
+      }
+    })
+    .catch(function() { el.style.color = '#ff5d5d'; el.textContent = '✗ request failed'; })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
 function updateShadowBadge(cb) {
   const badge = document.getElementById('shadow-badge');
   const track = document.getElementById('shadow-track');
@@ -612,6 +639,21 @@ def settings():
 def request_live():
     ok = request_live_trading(session['user_id'])
     return jsonify({'ok': ok})
+
+@auth_bp.route('/settings/test-bitget', methods=['POST'])
+@login_required
+def test_bitget():
+    """Read-only έλεγχος σύνδεσης Bitget — αποκρυπτογραφεί τα live keys & κάνει
+    signed GET account. ΔΕΝ στέλνει order, ΔΕΝ αγγίζει το LIVE_STRATEGIES. Μόνο
+    admin ή ο κάτοχος του live account (LIVE_TRADING_USER_ID)."""
+    from config import LIVE_TRADING_USER_ID
+    if session.get('role') != 'admin' and session.get('user_id') != LIVE_TRADING_USER_ID:
+        return jsonify({'ok': False, 'msg': 'Admin only'}), 403
+    try:
+        from bot import test_live_connection
+        return jsonify(test_live_connection())
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': f'error: {type(e).__name__}'})
 
 # ─────────────────────────────────────────────
 # CHANGE PASSWORD
