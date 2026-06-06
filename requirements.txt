@@ -28,7 +28,11 @@ feedparser==6.0.11
 schedule==1.2.2
 
 # PostgreSQL driver (Railway)
-psycopg2-binary==2.9.9
+# 2.9.10 ships cp313 manylinux wheels (with bundled libpq). 2.9.9 had no 3.13
+# wheel, so under the Railpack builder (Python 3.13) it compiled from source and
+# linked the build-stage libpq — absent in the runtime image, so `import psycopg2`
+# failed at runtime ("psycopg2 not installed — DB disabled"). The wheel fixes it.
+psycopg2-binary==2.9.10
 
 
 # ── Build-time only (knowledge base) ────────────────────────────
