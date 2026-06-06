@@ -279,32 +279,22 @@ def place_order_paper(side, qty, entry, sl, tp):
     log.info(f"[PAPER] {side} qty={qty:.4f} @ {entry:.2f} SL={sl:.2f} TP={tp:.2f}")
     return f"PAPER_{int(time.time())}"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LEGACY GLOBAL LIVE PATH — DISABLED (fail-closed).
+# Όλο το live ordering περνά πλέον ΑΠΟΚΛΕΙΣΤΙΚΑ από per-strategy, allowlisted
+# clients με κρυπτογραφημένα dashboard keys (βλ. place_order_live_c). Αυτές οι
+# δύο global env-key συναρτήσεις (που τις μοιράζονταν A/B/CM/SMC) απενεργοποιούνται
+# ώστε ΚΑΜΙΑ στρατηγική εκτός allowlist να μην έχει προσβάσιμο live path —
+# ακόμη κι αν κάποιος ορίσει TRADING_MODE=LIVE.
+# ─────────────────────────────────────────────────────────────────────────────
 def place_order_live(side, qty, sl, tp):
-    bitget_signed("POST", "/api/v2/mix/account/set-leverage", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginCoin": "USDT", "leverage": str(LEVERAGE),
-        "holdSide": "long" if side == "LONG" else "short",
-    })
-    r = bitget_signed("POST", "/api/v2/mix/order/place-order", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginMode": "isolated", "marginCoin": "USDT",
-        "size": str(round(qty, 4)),
-        "side": "buy" if side == "LONG" else "sell",
-        "tradeSide": "open", "orderType": "market",
-        "presetStopSurplusPrice": str(round(tp, 2)),
-        "presetStopLossPrice":    str(round(sl, 2)),
-    })
-    log.info(f"Live order: {r}")
-    return r.get("data", {}).get("orderId", None)
+    log.error("[SAFETY] global place_order_live is DISABLED — live ordering is "
+              "per-strategy & allowlisted (LIVE_STRATEGIES). Refusing.")
+    return None
 
 def close_position_live(side, qty):
-    bitget_signed("POST", "/api/v2/mix/order/place-order", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
-        "marginCoin": "USDT",
-        "side": "sell" if side == "LONG" else "buy",
-        "tradeSide": "close", "orderType": "market",
-        "size": str(qty),
-    })
+    log.error("[SAFETY] global close_position_live is DISABLED — refusing.")
+    return None
 
 # =================================================================
 # REAL-TIME DATA via WebSocket + REST history
@@ -1074,6 +1064,253 @@ def calc_qty(balance, risk_pct, entry, sl):
     if risk_dist <= 0: return MIN_ORDER_QTY
     return max(round((balance * risk_pct) / risk_dist, 4), MIN_ORDER_QTY)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LIVE TRADING ENGINE — per-strategy allowlist + encrypted dashboard creds
+# ═══════════════════════════════════════════════════════════════════════════
+# ΕΓΓΥΗΣΗ (α): υπάρχει ΑΚΡΙΒΩΣ ΜΙΑ λειτουργική live-order συνάρτηση
+# (place_order_live_c) και κάνει hard-assert ότι 'C' ∈ LIVE_STRATEGIES + έγκυρα
+# decrypted creds. Οι legacy global live συναρτήσεις είναι disabled. Καμία άλλη
+# στρατηγική δεν έχει προσβάσιμο live path. Default allowlist κενό ⇒ όλες PAPER.
+import secrets_vault
+import live_trading
+
+class BitgetClient:
+    """Υπογράφει Bitget requests με ΡΗΤΑ credentials (όχι env vars). ΠΟΤΕ δεν
+    λογάρει τα keys/signature."""
+    def __init__(self, api_key, secret, passphrase):
+        self._k = api_key; self._s = secret; self._p = passphrase
+
+    def signed(self, method, path, body=None):
+        import hmac, hashlib, base64
+        ts = str(int(time.time() * 1000))
+        body_str = json.dumps(body or {})
+        msg = ts + method.upper() + path + (body_str if method == "POST" else "")
+        sig = base64.b64encode(
+            hmac.new(self._s.encode(), msg.encode(), hashlib.sha256).digest()
+        ).decode()
+        headers = {
+            "ACCESS-KEY": self._k, "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": ts,
+            "ACCESS-PASSPHRASE": self._p, "Content-Type": "application/json", "locale": "en-US",
+        }
+        try:
+            if method == "GET":
+                r = requests.get(BITGET_BASE + path, headers=headers, timeout=10)
+            else:
+                r = requests.post(BITGET_BASE + path, headers=headers, data=body_str, timeout=10)
+            return r.json()
+        except (requests.RequestException, ValueError) as e:
+            log.error(f"[LIVE] Bitget request error: {type(e).__name__}")
+            return {}
+
+
+_live_creds_cache = {"client": None, "ok": False, "checked_at": 0.0}
+_live_creds_lock  = threading.Lock()
+_LIVE_CRED_TTL    = 300   # re-validate creds κάθε 5'
+
+def _build_live_client():
+    """Φέρε & αποκρυπτογράφησε τα creds του LIVE_TRADING_USER_ID → BitgetClient.
+    FAIL-CLOSED: None αν λείπει vault key/creds."""
+    if not secrets_vault.available():
+        return None
+    from database import get_live_credentials
+    creds = get_live_credentials(LIVE_TRADING_USER_ID)
+    if not creds:
+        return None
+    return BitgetClient(creds["api_key"], creds["secret"], creds["passphrase"])
+
+def _validate_client(client):
+    """Lightweight signed GET account — επιβεβαιώνει ότι τα keys δουλεύουν."""
+    if client is None:
+        return False
+    path = (f"/api/v2/mix/account/account?symbol={BITGET_SYMBOL}"
+            f"&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
+    r = client.signed("GET", path)
+    return str(r.get("code")) == "00000"
+
+def live_credentials_ok(strategy, force=False):
+    """True ΜΟΝΟ αν: strategy ∈ LIVE_STRATEGIES ΚΑΙ έγκυρα decrypted creds ΚΑΙ
+    επιτυχής signed call. Cached με TTL. FAIL-CLOSED."""
+    if strategy not in LIVE_STRATEGIES:
+        return False
+    now = time.time()
+    with _live_creds_lock:
+        fresh = (now - _live_creds_cache["checked_at"]) < _LIVE_CRED_TTL
+        if not force and fresh and _live_creds_cache["client"] is not None:
+            return _live_creds_cache["ok"]
+        client = _build_live_client()
+        ok = _validate_client(client)
+        _live_creds_cache.update(client=client, ok=ok, checked_at=now)
+        if not ok:
+            log.warning("[LIVE] credential check failed — %s stays PAPER", strategy)
+        return ok
+
+def _live_client():
+    with _live_creds_lock:
+        return _live_creds_cache["client"]
+
+def resolve_strategy_mode(strategy):
+    """'LIVE' μόνο αν allowlisted ΚΑΙ creds OK· αλλιώς 'PAPER'. FAIL-CLOSED."""
+    return "LIVE" if (strategy in LIVE_STRATEGIES and live_credentials_ok(strategy)) else "PAPER"
+
+
+# ── Contract specs + sizing για μικρό λογαριασμό ────────────────────────────
+_contract_specs = {"min_qty": MIN_ORDER_QTY, "size_step": MIN_ORDER_QTY, "fetched": False}
+
+def get_contract_specs():
+    """min trade size & step για το BTCUSDT perp (cached). Fallback: 0.001."""
+    if _contract_specs["fetched"]:
+        return _contract_specs
+    try:
+        r = bitget_get("/api/v2/mix/market/contracts",
+                       {"symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE})
+        data = r.get("data") or []
+        if data:
+            c = data[0]
+            mn = float(c.get("minTradeNum", MIN_ORDER_QTY)) or MIN_ORDER_QTY
+            step = float(c.get("sizeMultiplier", mn)) or mn
+            _contract_specs.update(min_qty=mn, size_step=step, fetched=True)
+            log.info("[LIVE] contract specs: min_qty=%s step=%s", mn, step)
+    except Exception as e:
+        log.warning("[LIVE] contract specs fetch failed (%s) — fallback 0.001", type(e).__name__)
+    return _contract_specs
+
+def prepare_live_size(qty, entry, sl, balance):
+    """Wrapper γύρω από το (pure) live_trading.prepare_live_size με τα config
+    constants + contract specs + logging. → (final_qty, leverage) ή None (skip)."""
+    specs = get_contract_specs()
+    res = live_trading.prepare_live_size(
+        qty, entry, sl, balance,
+        min_qty=specs["min_qty"], size_step=specs["size_step"] or specs["min_qty"],
+        leverage_cap=LIVE_LEVERAGE_CAP, max_trade_risk_pct=LIVE_MAX_TRADE_RISK_PCT,
+        margin_buffer=LIVE_MARGIN_BUFFER,
+    )
+    if res is None:
+        log.warning("[LIVE][C] skip: sizing rejected (qty / risk cap %.0f%% / affordability) "
+                    "for entry~%.2f balance $%.2f", LIVE_MAX_TRADE_RISK_PCT * 100, entry, balance)
+    return res
+
+def _live_calc_qty_c(balance, risk_pct, entry, sl):
+    """calc_qty για LIVE C: risk-based μέγεθος → exchange-valid (rounded) ή 0=skip.
+    Έτσι το position dict έχει ΑΚΡΙΒΩΣ το μέγεθος που μπαίνει στο exchange."""
+    raw = calc_qty(balance, risk_pct, entry, sl)
+    res = prepare_live_size(raw, entry, sl, balance)
+    return res[0] if res else 0.0
+
+
+# ── Live order placement / close για τη C (encrypted creds) ─────────────────
+def place_order_live_c(side, qty, entry, sl, tp):
+    """LIVE open για τη C. exchange SL = strategy SL (backstop αν πέσει το process·
+    το software trailing κλείνει νωρίτερα). ΟΧΙ preset TP. Returns order_id ή None.
+    ΔΕΝ επιστρέφει oid χωρίς επιβεβαιωμένη εκτέλεση → κανένα ghost στο open."""
+    if "C" not in LIVE_STRATEGIES:                       # hard gate (α)
+        log.error("[SAFETY] place_order_live_c called but 'C' not in LIVE_STRATEGIES")
+        return None
+    if qty <= 0:
+        return None                                       # skip (sizing είπε όχι)
+    if not live_credentials_ok("C"):
+        log.error("[LIVE][C] credentials not OK at order time — refusing")
+        return None
+    client = _live_client()
+    if client is None:
+        return None
+    notional = qty * entry
+    leverage = live_trading.leverage_for(notional, state_c.get("balance", 0),
+                                         LIVE_LEVERAGE_CAP, LIVE_MARGIN_BUFFER)
+    client.signed("POST", "/api/v2/mix/account/set-leverage", {
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
+        "leverage": str(leverage), "holdSide": "long" if side == "LONG" else "short",
+    })
+    r = client.signed("POST", "/api/v2/mix/order/place-order", {
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
+        "marginMode": "isolated", "marginCoin": "USDT",
+        "size": str(qty),
+        "side": "buy" if side == "LONG" else "sell",
+        "tradeSide": "open", "orderType": "market",
+        "presetStopLossPrice": str(round(sl, 2)),         # exchange backstop = strategy SL
+    })
+    if str(r.get("code")) != "00000":
+        log.error("[LIVE][C] OPEN rejected: code=%s msg=%s", r.get("code"), r.get("msg"))
+        send_telegram(f"⚠️ <b>[C][LIVE] ORDER FAILED</b>\n{r.get('msg','?')}")
+        return None
+    oid = (r.get("data") or {}).get("orderId")
+    if not oid:
+        log.error("[LIVE][C] OPEN: no orderId in response")
+        return None
+    log.info("[LIVE][C] OPEN %s qty=%s lev=%dx entry~%.2f SL=%.2f oid=%s",
+             side, qty, leverage, entry, sl, oid)
+    return oid
+
+def close_position_live_c(side, qty):
+    """LIVE market close για τη C. Returns True/False (καθαρά, χωρίς ghost)."""
+    if "C" not in LIVE_STRATEGIES or not live_credentials_ok("C"):
+        return False
+    client = _live_client()
+    if client is None:
+        return False
+    r = client.signed("POST", "/api/v2/mix/order/place-order", {
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
+        "side": "sell" if side == "LONG" else "buy",
+        "tradeSide": "close", "orderType": "market", "size": str(qty),
+    })
+    if str(r.get("code")) != "00000":
+        log.error("[LIVE][C] CLOSE failed: code=%s msg=%s", r.get("code"), r.get("msg"))
+        return False
+    log.info("[LIVE][C] CLOSE %s qty=%s ok", side, qty)
+    return True
+
+def c_order_deps():
+    """(place_order, calc_qty, is_live) για τη C, βάσει mode. Single source of
+    truth για το live/paper της C — το χρησιμοποιεί το webhook (main.py)."""
+    if resolve_strategy_mode("C") == "LIVE":
+        return place_order_live_c, _live_calc_qty_c, True
+    return place_order_paper, calc_qty, False
+
+
+# ── Live reconciler — πηγή αλήθειας το exchange· εξαλείφει ghosts ───────────
+def _exchange_position_c():
+    """('ok', {size, side}) | ('ok', None=flat) | ('error', None)."""
+    client = _live_client()
+    if client is None:
+        return ("error", None)
+    path = (f"/api/v2/mix/position/single-position?symbol={BITGET_SYMBOL}"
+            f"&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
+    r = client.signed("GET", path)
+    if str(r.get("code")) != "00000":
+        return ("error", None)
+    for p in (r.get("data") or []):
+        total = float(p.get("total", 0) or 0)
+        if total > 0:
+            return ("ok", {"size": total, "side": p.get("holdSide")})
+    return ("ok", None)
+
+def live_reconciler():
+    """Κάθε 20s, για live C: ευθυγραμμίζει state ↔ exchange. Τρέχει μόνο αν live."""
+    log.info("[LIVE] reconciler started")
+    while True:
+        time.sleep(20)
+        try:
+            if "C" not in LIVE_STRATEGIES or not live_credentials_ok("C"):
+                continue
+            status, expos = _exchange_position_c()
+            if status == "error":
+                continue
+            pos = state_c.get("position")
+            if pos and pos.get("live") and expos is None:
+                # exchange έκλεισε (SL backstop/TP) αλλά state ανοιχτό → finalize
+                # ΧΩΡΙΣ νέα exchange-close (είναι ήδη flat).
+                entry = pos["entry"]; px = rt.price or entry
+                result = "WIN" if ((px > entry) == (pos["type"] == "LONG")) else "LOSS"
+                log.warning("[LIVE][C] reconcile: exchange flat, state open → finalize")
+                finalize_trade_c(px, result, "RECONCILE (exchange closed)", close_exchange=False)
+            elif (not pos) and expos is not None:
+                # GHOST: exchange ανοιχτό, state flat → alert + flatten
+                log.error("[LIVE][C] reconcile: GHOST (exchange open, state flat) → flatten")
+                send_telegram("⚠️ <b>[C][LIVE] GHOST</b> θέση στο exchange (όχι στο state) — flatten.")
+                close_position_live_c("LONG" if expos["side"] == "long" else "SHORT", expos["size"])
+        except Exception as e:
+            log.error("[LIVE] reconciler error: %s", type(e).__name__)
+
 def finalize_trade_a(price, result, note=""):
     pos = state["position"]
     if not pos: return
@@ -1200,9 +1437,17 @@ def run_strategy_a():
 # POSITION MANAGEMENT - Strategy C (webhook only, same as B)
 # =================================================================
 
-def finalize_trade_c(price, result, note=""):
+def finalize_trade_c(price, result, note="", close_exchange=True):
     pos = state_c["position"]
     if not pos: return
+    # LIVE: κλείσε ΠΡΩΤΑ στο exchange. Αν αποτύχει → ΜΗΝ καθαρίσεις το state
+    # (αλλιώς ghost: state flat, exchange ανοιχτό). close_exchange=False όταν ο
+    # reconciler καλεί επειδή το exchange είναι ΗΔΗ flat.
+    if pos.get("live") and close_exchange:
+        if not close_position_live_c(pos["type"], pos["qty"]):
+            log.error("[LIVE][C] close failed — keeping position; reconciler θα ξαναδοκιμάσει")
+            send_telegram("⚠️ <b>[C][LIVE] CLOSE FAILED</b>\nΗ θέση παραμένει ανοιχτή — retry.")
+            return
     pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
     # BREAK EVEN: δεν μετράει
     trade_c = {
@@ -1554,6 +1799,12 @@ def bot_loop():
     rt.load_history()
     rt.start_websocket()
     rt.start_polling()
+
+    # Live reconciler — μόνο αν κάποια στρατηγική είναι allowlisted για live.
+    if LIVE_STRATEGIES:
+        log.info("[LIVE] LIVE_STRATEGIES=%s — starting reconciler", sorted(LIVE_STRATEGIES))
+        threading.Thread(target=live_reconciler, daemon=True).start()
+
     time.sleep(5)
 
     send_telegram(

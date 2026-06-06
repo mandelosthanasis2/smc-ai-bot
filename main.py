@@ -999,24 +999,24 @@ def _wh_a(sig, price=None, data=None):
 def _wh_c(sig, price=None, data=None):
     """Strategy C webhook → delegate στο αυτόνομο strategies/strategy_c.py module."""
     import os as _os
-    from bot import (rt, state_c, save_state_c, send_telegram, calc_qty,
-                     place_order_paper, place_order_live, get_candles, build_1h_box,
-                     _ai_validate, _send_ai_trade_summary, TRADING_MODE, RISK_PER_TRADE,
+    from bot import (rt, state_c, save_state_c, send_telegram,
+                     get_candles, build_1h_box, c_order_deps,
+                     _ai_validate, _send_ai_trade_summary, RISK_PER_TRADE,
                      AI_SHADOW_MASTER, state_lock_c)
     from strategies import strategy_c
 
-    # Per-strategy overrides — TRADING_MODE_C / RISK_PER_TRADE_C αν υπάρχουν
-    _TRADING_MODE_C = _os.environ.get("TRADING_MODE_C", TRADING_MODE).upper()
     _RISK_C = float(_os.environ.get("RISK_PER_TRADE_C", str(RISK_PER_TRADE)))
 
-    def _place(side, qty, entry, sl, tp):
-        return (place_order_paper(side, qty, entry, sl, tp) if _TRADING_MODE_C == 'PAPER'
-                else place_order_live(side, qty, sl, tp))
+    # Single source of truth για live/paper της C (allowlist + creds, fail-closed).
+    place_order, calc_qty_c, is_live = c_order_deps()
+    if is_live:
+        log.info("[C] webhook in LIVE mode")
 
     deps = {
         "get_price":        lambda: rt.price,
-        "calc_qty":         calc_qty,
-        "place_order":      _place,
+        "calc_qty":         calc_qty_c,
+        "place_order":      place_order,
+        "is_live":          is_live,
         "send_telegram":    send_telegram,
         "ai_validate":      _ai_validate,
         "save_state":       save_state_c,
