@@ -1154,32 +1154,62 @@ def resolve_strategy_mode(strategy):
     return "LIVE" if (strategy in LIVE_STRATEGIES and live_credentials_ok(strategy)) else "PAPER"
 
 
-def test_live_connection():
-    """READ-ONLY διαγνωστικό για το dashboard: αποκρυπτογραφεί τα keys του
-    LIVE_TRADING_USER_ID και κάνει signed GET account. ΔΕΝ στέλνει order, ΔΕΝ
-    εξαρτάται από το LIVE_STRATEGIES — άρα επικυρώνει τα keys ΧΩΡΙΣ να πάει live.
-    Returns {ok, available, equity, msg}. ΠΟΤΕ δεν επιστρέφει/λογάρει τα keys."""
+def _live_account():
+    """Read-only signed GET account με τα live keys. → (data_dict, None) επιτυχία,
+    ή (None, error_msg). Κοινό για test_live_connection + live_available_balance."""
     if not secrets_vault.available():
-        return {"ok": False, "msg": "SECRETS_ENCRYPTION_KEY δεν έχει οριστεί στο server."}
+        return None, "SECRETS_ENCRYPTION_KEY δεν έχει οριστεί στο server."
     client = _build_live_client()
     if client is None:
-        return {"ok": False, "msg": "Δεν βρέθηκαν αποθηκευμένα/αποκρυπτογραφήσιμα Bitget keys."}
+        return None, "Δεν βρέθηκαν αποθηκευμένα/αποκρυπτογραφήσιμα Bitget keys."
     path = (f"/api/v2/mix/account/account?symbol={BITGET_SYMBOL}"
             f"&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
     r = client.signed("GET", path)
     code = str(r.get("code"))
     if code != "00000":
-        return {"ok": False, "msg": f"Bitget error {code}: {r.get('msg', '?')}"}
+        return None, f"Bitget error {code}: {r.get('msg', '?')}"
     data = r.get("data") or {}
     if isinstance(data, list):
         data = data[0] if data else {}
-    def _f(v):
-        try:    return float(v)
-        except (TypeError, ValueError): return None
-    available = _f(data.get("available"))
-    equity    = _f(data.get("accountEquity"))
+    return data, None
+
+def _to_float(v):
+    try:    return float(v)
+    except (TypeError, ValueError): return None
+
+def test_live_connection():
+    """READ-ONLY διαγνωστικό για το dashboard: signed GET account. ΔΕΝ στέλνει
+    order, ΔΕΝ εξαρτάται από το LIVE_STRATEGIES — επικυρώνει τα keys ΧΩΡΙΣ live.
+    Returns {ok, available, equity, msg}. ΠΟΤΕ δεν επιστρέφει/λογάρει τα keys."""
+    data, err = _live_account()
+    if err:
+        return {"ok": False, "msg": err}
+    available = _to_float(data.get("available"))
+    equity    = _to_float(data.get("accountEquity"))
     log.info("[LIVE] connection test OK (available=%s equity=%s USDT)", available, equity)
     return {"ok": True, "available": available, "equity": equity, "msg": "Connected"}
+
+
+# ── Real exchange balance — πηγή για το LIVE sizing (όχι το paper balance) ──
+_live_balance_cache = {"value": None, "ts": 0.0}
+
+def live_available_balance(max_age=5.0):
+    """Πραγματικό available USDT από το exchange (cached ~5s ώστε sizing & order
+    να βλέπουν την ίδια τιμή με ένα call). → float, ή None αν δεν διαβαστεί
+    (no creds / API error / parse). FAIL-CLOSED — ο caller ΔΕΝ ανοίγει θέση."""
+    now = time.time()
+    if _live_balance_cache["value"] is not None and (now - _live_balance_cache["ts"]) < max_age:
+        return _live_balance_cache["value"]
+    data, err = _live_account()
+    if err:
+        log.error("[LIVE][C] cannot read real balance: %s", err)
+        return None
+    val = _to_float(data.get("available"))
+    if val is None:
+        log.error("[LIVE][C] real balance unpar. — refusing")
+        return None
+    _live_balance_cache.update(value=val, ts=now)
+    return val
 
 
 # ── Contract specs + sizing για μικρό λογαριασμό ────────────────────────────
@@ -1219,10 +1249,16 @@ def prepare_live_size(qty, entry, sl, balance):
     return res
 
 def _live_calc_qty_c(balance, risk_pct, entry, sl):
-    """calc_qty για LIVE C: risk-based μέγεθος → exchange-valid (rounded) ή 0=skip.
-    Έτσι το position dict έχει ΑΚΡΙΒΩΣ το μέγεθος που μπαίνει στο exchange."""
-    raw = calc_qty(balance, risk_pct, entry, sl)
-    res = prepare_live_size(raw, entry, sl, balance)
+    """calc_qty για LIVE C. ΑΓΝΟΕΙ το `balance` arg (paper balance που περνά η
+    strategy_c) και χρησιμοποιεί το ΠΡΑΓΜΑΤΙΚΟ available του exchange. Αν δεν
+    διαβαστεί το real balance → 0.0 (η strategy_c ΔΕΝ ανοίγει θέση — όχι fallback
+    στο paper). Risk-based μέγεθος → exchange-valid (rounded) ή 0=skip."""
+    real_bal = live_available_balance()
+    if real_bal is None:
+        log.error("[LIVE][C] no real balance — refusing to size (no paper fallback)")
+        return 0.0
+    raw = calc_qty(real_bal, risk_pct, entry, sl)
+    res = prepare_live_size(raw, entry, sl, real_bal)
     return res[0] if res else 0.0
 
 
@@ -1242,8 +1278,12 @@ def place_order_live_c(side, qty, entry, sl, tp):
     client = _live_client()
     if client is None:
         return None
+    real_bal = live_available_balance()
+    if real_bal is None:                                  # δεν ανοίγουμε χωρίς real balance
+        log.error("[LIVE][C] no real balance at order time — refusing order")
+        return None
     notional = qty * entry
-    leverage = live_trading.leverage_for(notional, state_c.get("balance", 0),
+    leverage = live_trading.leverage_for(notional, real_bal,
                                          LIVE_LEVERAGE_CAP, LIVE_MARGIN_BUFFER)
     client.signed("POST", "/api/v2/mix/account/set-leverage", {
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
