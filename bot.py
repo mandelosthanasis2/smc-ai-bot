@@ -1154,6 +1154,34 @@ def resolve_strategy_mode(strategy):
     return "LIVE" if (strategy in LIVE_STRATEGIES and live_credentials_ok(strategy)) else "PAPER"
 
 
+def test_live_connection():
+    """READ-ONLY διαγνωστικό για το dashboard: αποκρυπτογραφεί τα keys του
+    LIVE_TRADING_USER_ID και κάνει signed GET account. ΔΕΝ στέλνει order, ΔΕΝ
+    εξαρτάται από το LIVE_STRATEGIES — άρα επικυρώνει τα keys ΧΩΡΙΣ να πάει live.
+    Returns {ok, available, equity, msg}. ΠΟΤΕ δεν επιστρέφει/λογάρει τα keys."""
+    if not secrets_vault.available():
+        return {"ok": False, "msg": "SECRETS_ENCRYPTION_KEY δεν έχει οριστεί στο server."}
+    client = _build_live_client()
+    if client is None:
+        return {"ok": False, "msg": "Δεν βρέθηκαν αποθηκευμένα/αποκρυπτογραφήσιμα Bitget keys."}
+    path = (f"/api/v2/mix/account/account?symbol={BITGET_SYMBOL}"
+            f"&productType={BITGET_PROD_TYPE}&marginCoin=USDT")
+    r = client.signed("GET", path)
+    code = str(r.get("code"))
+    if code != "00000":
+        return {"ok": False, "msg": f"Bitget error {code}: {r.get('msg', '?')}"}
+    data = r.get("data") or {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    def _f(v):
+        try:    return float(v)
+        except (TypeError, ValueError): return None
+    available = _f(data.get("available"))
+    equity    = _f(data.get("accountEquity"))
+    log.info("[LIVE] connection test OK (available=%s equity=%s USDT)", available, equity)
+    return {"ok": True, "available": available, "equity": equity, "msg": "Connected"}
+
+
 # ── Contract specs + sizing για μικρό λογαριασμό ────────────────────────────
 _contract_specs = {"min_qty": MIN_ORDER_QTY, "size_step": MIN_ORDER_QTY, "fetched": False}
 
