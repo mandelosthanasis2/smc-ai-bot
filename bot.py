@@ -1871,6 +1871,8 @@ def bot_loop():
     # Live reconciler — μόνο αν κάποια στρατηγική είναι allowlisted για live.
     if LIVE_STRATEGIES:
         log.info("[LIVE] LIVE_STRATEGIES=%s — starting reconciler", sorted(LIVE_STRATEGIES))
+        log.info("[LIVE] leverage cap = %dx (auto-min) | risk per trade = %.1f%% | margin buffer = %.0f%%",
+                 LIVE_LEVERAGE_CAP, RISK_PER_TRADE * 100, LIVE_MARGIN_BUFFER * 100)
         threading.Thread(target=live_reconciler, daemon=True).start()
 
     time.sleep(5)
