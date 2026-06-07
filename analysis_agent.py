@@ -414,7 +414,7 @@ def run_briefing(session: str):
             send_telegram(text[mid:].strip())
     _tg_safe_send(msg1)
     _tg_safe_send(msg2)
-    log.infolog.info(f"{session} briefing sent!")
+    log.info(f"{session} briefing sent!")
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
