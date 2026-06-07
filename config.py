@@ -29,7 +29,7 @@ LIVE_TRADING_USER_ID = int(os.environ.get("LIVE_TRADING_USER_ID", "1"))
 # Auto-leverage cap: για μικρό λογαριασμό ($80) χρειάζεται μόχλευση ώστε να
 # χωρά το exchange minimum (0.001 BTC). Επιλέγεται η ΕΛΑΧΙΣΤΗ που χρειάζεται,
 # με ανώτατο αυτό το cap. Μεγαλύτερο = πιο κοντινό liquidation.
-LIVE_LEVERAGE_CAP = int(os.environ.get("LIVE_LEVERAGE_CAP", "3"))
+LIVE_LEVERAGE_CAP = int(os.environ.get("LIVE_LEVERAGE_CAP", "10"))
 # Αν μια θέση πρέπει να στρογγυλοποιηθεί στο exchange minimum, μην την ανοίξεις
 # αν ρισκάρει πάνω από αυτό το ποσοστό του balance (μετά το rounding).
 LIVE_MAX_TRADE_RISK_PCT = float(os.environ.get("LIVE_MAX_TRADE_RISK_PCT", "0.10"))
