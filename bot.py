@@ -1317,7 +1317,8 @@ def close_position_live_c(side, qty):
     if client is None:
         return False
     r = client.signed("POST", "/api/v2/mix/order/place-order", {
-        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
+        "marginMode": "isolated", "marginCoin": "USDT",
         "side": "sell" if side == "LONG" else "buy",
         "tradeSide": "close", "orderType": "market", "size": str(qty),
     })
