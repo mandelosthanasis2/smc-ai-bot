@@ -21,6 +21,16 @@ def round_up_to_step(qty: float, min_qty: float, step: float) -> float:
     return round(math.ceil(q / step) * step, 8)
 
 
+def round_to_tick(price: float, tick: float) -> float:
+    """Snap μια τιμή στο πλησιέστερο price tick (π.χ. 0.1 για BTCUSDT), χωρίς
+    float drift. Το Bitget απορρίπτει τιμές που δεν είναι πολλαπλάσια του tick
+    (code: "should be a multiple of ..."). Fallback σε 2 δεκαδικά αν tick άκυρο."""
+    if not tick or tick <= 0:
+        return round(price, 2)
+    ndigits = max(0, -int(math.floor(math.log10(tick))))
+    return round(round(price / tick) * tick, ndigits)
+
+
 def leverage_for(notional: float, balance: float, leverage_cap: int, margin_buffer: float) -> int:
     """Ελάχιστη ακέραιη μόχλευση ώστε margin (=notional/lev) ≤ balance·buffer, με cap."""
     usable = max(balance * margin_buffer, 1e-9)

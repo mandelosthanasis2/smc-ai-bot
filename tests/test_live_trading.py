@@ -165,3 +165,27 @@ class TestConfigAllowlist:
         finally:
             os.environ.pop("LIVE_STRATEGIES", None)
             importlib.reload(config)
+
+
+# ── price tick rounding (Bitget "multiple of 0.1" rejection) ─────────────────
+
+class TestRoundToTick:
+    def test_snaps_to_nearest_tick(self):
+        assert LT.round_to_tick(61996.37, 0.1) == 61996.4
+        assert LT.round_to_tick(61996.31, 0.1) == 61996.3
+        assert LT.round_to_tick(60900.0, 0.1) == 60900.0
+
+    def test_output_is_exact_multiple_of_tick(self):
+        # τιμές που σπάνε με round(.,2) (π.χ. .37/.34) πρέπει να γίνονται πολλαπλάσια του tick
+        for p in (61996.37, 61996.34, 60899.95, 12345.678, 0.157, 109876.543):
+            out = LT.round_to_tick(p, 0.1)
+            assert abs(out * 10 - round(out * 10)) < 1e-6, f"{p} -> {out} όχι πολλαπλάσιο 0.1"
+
+    def test_other_ticks(self):
+        assert LT.round_to_tick(100.07, 0.05) == 100.05
+        assert LT.round_to_tick(100.6, 1.0) == 101.0
+        assert LT.round_to_tick(100.49, 0.01) == 100.49
+
+    def test_invalid_tick_falls_back_to_2dp(self):
+        assert LT.round_to_tick(61996.379, 0) == 61996.38
+        assert LT.round_to_tick(61996.379, -1) == 61996.38
