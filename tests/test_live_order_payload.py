@@ -89,3 +89,31 @@ def test_open_and_close_share_required_fields():
         f"μόνο-open={sorted(open_req - close_req)} "
         f"μόνο-close={sorted(close_req - open_req)}"
     )
+
+
+def _place_order_field_value_src(func_name, field):
+    """ast.unparse() του value-expression για το `field` μέσα στο place-order
+    dict της `func_name` (π.χ. το expression του presetStopLossPrice)."""
+    tree = ast.parse(_BOT_SRC.read_text(encoding="utf-8"))
+    func = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == func_name), None)
+    assert func is not None, f"{func_name} δεν βρέθηκε στο bot.py"
+    for call in ast.walk(func):
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "signed" and len(call.args) >= 3
+                and isinstance(call.args[1], ast.Constant)
+                and call.args[1].value == _PLACE_ORDER_PATH
+                and isinstance(call.args[2], ast.Dict)):
+            for k, v in zip(call.args[2].keys, call.args[2].values):
+                if isinstance(k, ast.Constant) and k.value == field:
+                    return ast.unparse(v)
+    raise AssertionError(f"{field} δεν βρέθηκε στο place-order του {func_name}")
+
+
+def test_open_safety_sl_snapped_to_price_tick():
+    """Regression: το safety SL πρέπει να στρογγυλοποιείται σε price tick
+    (αλλιώς Bitget 'should be a multiple of 0.1') — όχι σκέτο round(sl, 2)."""
+    src = _place_order_field_value_src(_OPEN_FN, "presetStopLossPrice")
+    assert "round_to_tick" in src, (
+        f"presetStopLossPrice δεν στρογγυλοποιείται σε tick, βρέθηκε: {src}"
+    )

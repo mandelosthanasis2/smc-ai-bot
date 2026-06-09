@@ -1213,10 +1213,12 @@ def live_available_balance(max_age=5.0):
 
 
 # ── Contract specs + sizing για μικρό λογαριασμό ────────────────────────────
-_contract_specs = {"min_qty": MIN_ORDER_QTY, "size_step": MIN_ORDER_QTY, "fetched": False}
+_contract_specs = {"min_qty": MIN_ORDER_QTY, "size_step": MIN_ORDER_QTY,
+                   "price_tick": 0.1, "fetched": False}
 
 def get_contract_specs():
-    """min trade size & step για το BTCUSDT perp (cached). Fallback: 0.001."""
+    """min trade size & step & price tick για το BTCUSDT perp (cached).
+    Fallbacks: size 0.001, price_tick 0.1."""
     if _contract_specs["fetched"]:
         return _contract_specs
     try:
@@ -1227,10 +1229,16 @@ def get_contract_specs():
             c = data[0]
             mn = float(c.get("minTradeNum", MIN_ORDER_QTY)) or MIN_ORDER_QTY
             step = float(c.get("sizeMultiplier", mn)) or mn
-            _contract_specs.update(min_qty=mn, size_step=step, fetched=True)
-            log.info("[LIVE] contract specs: min_qty=%s step=%s", mn, step)
+            try:    # price tick = priceEndStep / 10^pricePlace (BTCUSDT: 1/10^1 = 0.1)
+                pp = int(c.get("pricePlace", 1))
+                pes = float(c.get("priceEndStep", 1)) or 1.0
+                tick = pes / (10 ** pp)
+            except (TypeError, ValueError):
+                tick = _contract_specs["price_tick"]
+            _contract_specs.update(min_qty=mn, size_step=step, price_tick=tick, fetched=True)
+            log.info("[LIVE] contract specs: min_qty=%s step=%s price_tick=%s", mn, step, tick)
     except Exception as e:
-        log.warning("[LIVE] contract specs fetch failed (%s) — fallback 0.001", type(e).__name__)
+        log.warning("[LIVE] contract specs fetch failed (%s) — fallbacks 0.001 / 0.1", type(e).__name__)
     return _contract_specs
 
 def prepare_live_size(qty, entry, sl, balance):
@@ -1295,7 +1303,7 @@ def place_order_live_c(side, qty, entry, sl, tp):
         "size": str(qty),
         "side": "buy" if side == "LONG" else "sell",
         "tradeSide": "open", "orderType": "market",
-        "presetStopLossPrice": str(round(sl, 2)),         # exchange backstop = strategy SL
+        "presetStopLossPrice": str(live_trading.round_to_tick(sl, get_contract_specs()["price_tick"])),  # exchange backstop = strategy SL (snapped to tick)
     })
     if str(r.get("code")) != "00000":
         log.error("[LIVE][C] OPEN rejected: code=%s msg=%s", r.get("code"), r.get("msg"))
