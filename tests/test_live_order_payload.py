@@ -117,3 +117,17 @@ def test_open_safety_sl_snapped_to_price_tick():
     assert "round_to_tick" in src, (
         f"presetStopLossPrice δεν στρογγυλοποιείται σε tick, βρέθηκε: {src}"
     )
+
+
+def test_close_treats_no_position_as_success():
+    """Regression: το close πρέπει να αντιμετωπίζει 'no position' (22002) ως
+    επιτυχία (μέσω close_succeeded) ώστε να καθαρίζει state χωρίς retry-loop."""
+    tree = ast.parse(_BOT_SRC.read_text(encoding="utf-8"))
+    func = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == _CLOSE_FN), None)
+    assert func is not None, f"{_CLOSE_FN} δεν βρέθηκε στο bot.py"
+    src = ast.unparse(func)
+    assert "close_succeeded" in src, (
+        "close_position_live_c πρέπει να χρησιμοποιεί close_succeeded "
+        "(αλλιώς το 22002 -> retry-loop)"
+    )

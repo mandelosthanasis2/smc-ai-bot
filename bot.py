@@ -1330,10 +1330,13 @@ def close_position_live_c(side, qty):
         "side": "sell" if side == "LONG" else "buy",
         "tradeSide": "close", "orderType": "market", "size": str(qty),
     })
-    if str(r.get("code")) != "00000":
+    if not live_trading.close_succeeded(r.get("code")):
         log.error("[LIVE][C] CLOSE failed: code=%s msg=%s", r.get("code"), r.get("msg"))
         return False
-    log.info("[LIVE][C] CLOSE %s qty=%s ok", side, qty)
+    if str(r.get("code")) == "22002":   # exchange ήδη flat (π.χ. safety SL) → success
+        log.warning("[LIVE][C] CLOSE %s: exchange already flat (22002) — treating as closed", side)
+    else:
+        log.info("[LIVE][C] CLOSE %s qty=%s ok", side, qty)
     return True
 
 def c_order_deps():

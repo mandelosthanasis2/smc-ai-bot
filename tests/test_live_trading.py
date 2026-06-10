@@ -189,3 +189,19 @@ class TestRoundToTick:
     def test_invalid_tick_falls_back_to_2dp(self):
         assert LT.round_to_tick(61996.379, 0) == 61996.38
         assert LT.round_to_tick(61996.379, -1) == 61996.38
+
+
+# ── close success codes (22002 'no position' = already closed) ───────────────
+
+class TestCloseSucceeded:
+    def test_normal_close_ok(self):
+        assert LT.close_succeeded("00000") is True
+
+    def test_no_position_treated_as_success(self):
+        # 22002 = θέση ήδη κλειστή (π.χ. safety SL) -> success, ΟΧΙ retry-loop
+        assert LT.close_succeeded("22002") is True
+        assert LT.close_succeeded(22002) is True
+
+    def test_real_failures_are_not_success(self):
+        for code in ("400172", "40774", "43025", "", None):
+            assert LT.close_succeeded(code) is False
