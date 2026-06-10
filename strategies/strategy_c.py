@@ -129,6 +129,7 @@ def process_webhook(deps, state, signal, price=None, data=None):
         with lock:
             state['position'] = {'type': signal, 'entry': p, 'sl': sl, 'tp': tp, 'qty': qty,
                                  'time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                                 'opened_at_ms': int(_time.time() * 1000),  # fill-accounting match key
                                  'order_id': oid, 'live': bool(deps.get('is_live', False)),
                                  'ai_action': _ai_act, 'ai_shadow': ai_shadow_master,
                                  'ai_confidence': (_ai_res.confidence if _ai_res else 0),

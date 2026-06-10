@@ -223,3 +223,27 @@ def test_sl_discovery_uses_verbatim_plan_pending_params():
     assert "orders-plan-pending" in src
     assert "planType=profit_loss" in src, "planType=profit_loss είναι required (verbatim)"
     assert "productType=" in src, "productType είναι required (verbatim)"
+
+
+# ── PR3: real fill accounting (history-position, verbatim) ───────────────────
+
+def test_fill_lookup_uses_verbatim_history_position_params():
+    """Το fill lookup διαβάζει history-position με productType + response key
+    `list` (verbatim), και ΔΕΝ αποφασίζει από τα αμφίσημα *TotalPos fields."""
+    func = _find_func("_closed_position_fill_c")
+    src = ast.unparse(func)
+    assert "history-position" in src
+    assert "productType=" in src
+    assert "'list'" in src or '"list"' in src, "response key είναι `list` (verbatim)"
+    assert "closeAvgPrice" in src and "select_closed_position" in src
+
+
+def test_finalize_pnl_override_is_optional_and_default_none():
+    """Το pnl_override πρέπει να είναι optional kwarg με default None —
+    paper path 100% ανεπηρέαστο."""
+    func = _find_func("finalize_trade_c")
+    args = func.args
+    assert "pnl_override" in [a.arg for a in args.args], "λείπει το pnl_override"
+    defaults = dict(zip([a.arg for a in args.args][-len(args.defaults):], args.defaults))
+    d = defaults.get("pnl_override")
+    assert isinstance(d, ast.Constant) and d.value is None

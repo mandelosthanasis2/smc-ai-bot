@@ -1478,6 +1478,40 @@ def _exchange_position_c():
             return ("ok", {"size": total, "side": p.get("holdSide")})
     return ("ok", None)
 
+def _closed_position_fill_c(pos):
+    """Πραγματικό fill της μόλις-κλεισμένης live C θέσης από το
+    GET history-position (verbatim: όλα τα params optional, response key `list`).
+    → (close_avg_price, exchange_pnl) ή None — ΠΟΤΕ exception (το finalize δεν
+    μπλοκάρει· σε αποτυχία ο caller πέφτει στο rt.price fallback)."""
+    try:
+        client = _live_client()
+        if client is None:
+            return None
+        path = (f"/api/v2/mix/position/history-position"
+                f"?symbol={BITGET_SYMBOL}&productType={BITGET_PROD_TYPE}")
+        r = client.signed("GET", path)
+        if str(r.get("code")) != "00000":
+            log.warning("[LIVE][C] fill lookup failed: code=%s msg=%s", r.get("code"), r.get("msg"))
+            return None
+        records = (r.get("data") or {}).get("list") or []
+        hold_side = "long" if pos["type"] == "LONG" else "short"
+        rec = live_trading.select_closed_position(records, hold_side, pos.get("opened_at_ms"))
+        if rec is None:
+            log.warning("[LIVE][C] fill lookup: no matching closed position (records=%d)", len(records))
+            return None
+        close_px = float(rec["closeAvgPrice"])
+        pnl = float(rec["pnl"])
+        # Observation-only: τα docs αντιφάσκουν με το example για τα *TotalPos —
+        # λογάρουμε για να μάθουμε τη σημασιολογία στο canary, ΔΕΝ αποφασίζουμε.
+        log.info("[LIVE][C] fill: closeAvg=%.2f pnl=%.4f netProfit=%s openAvg=%s "
+                 "openTotalPos=%s closeTotalPos=%s",
+                 close_px, pnl, rec.get("netProfit"), rec.get("openAvgPrice"),
+                 rec.get("openTotalPos"), rec.get("closeTotalPos"))
+        return close_px, pnl
+    except Exception as e:
+        log.warning("[LIVE][C] fill lookup error: %s — fallback rt.price", type(e).__name__)
+        return None
+
 def live_reconciler():
     """Κάθε 20s, για live C: ευθυγραμμίζει state ↔ exchange. Τρέχει μόνο αν live."""
     log.info("[LIVE] reconciler started")
@@ -1492,11 +1526,21 @@ def live_reconciler():
             pos = state_c.get("position")
             if pos and pos.get("live") and expos is None:
                 # exchange έκλεισε (SL backstop/TP) αλλά state ανοιχτό → finalize
-                # ΧΩΡΙΣ νέα exchange-close (είναι ήδη flat).
-                entry = pos["entry"]; px = rt.price or entry
-                result = "WIN" if ((px > entry) == (pos["type"] == "LONG")) else "LOSS"
-                log.warning("[LIVE][C] reconcile: exchange flat, state open → finalize")
-                finalize_trade_c(px, result, "RECONCILE (exchange closed)", close_exchange=False)
+                # ΧΩΡΙΣ νέα exchange-close (είναι ήδη flat). Accounting από το
+                # ΠΡΑΓΜΑΤΙΚΟ fill (closeAvgPrice + exchange pnl)· fallback rt.price.
+                entry = pos["entry"]
+                fill = _closed_position_fill_c(pos)
+                if fill is not None:
+                    px, real_pnl = fill
+                    result = live_trading.result_from_pnl(real_pnl)
+                    log.warning("[LIVE][C] reconcile: exchange flat → finalize @ real fill")
+                    finalize_trade_c(px, result, f"RECONCILE (exchange closed @ ${px:,.2f})",
+                                     close_exchange=False, pnl_override=real_pnl)
+                else:
+                    px = rt.price or entry
+                    result = "WIN" if ((px > entry) == (pos["type"] == "LONG")) else "LOSS"
+                    log.warning("[LIVE][C] reconcile: exchange flat, state open → finalize (rt.price fallback)")
+                    finalize_trade_c(px, result, "RECONCILE (exchange closed)", close_exchange=False)
             elif (not pos) and expos is not None:
                 # GHOST: exchange ανοιχτό, state flat → alert + flatten
                 log.error("[LIVE][C] reconcile: GHOST (exchange open, state flat) → flatten")
@@ -1631,7 +1675,7 @@ def run_strategy_a():
 # POSITION MANAGEMENT - Strategy C (webhook only, same as B)
 # =================================================================
 
-def finalize_trade_c(price, result, note="", close_exchange=True):
+def finalize_trade_c(price, result, note="", close_exchange=True, pnl_override=None):
     pos = state_c["position"]
     if not pos: return
     # LIVE: κλείσε ΠΡΩΤΑ στο exchange. Αν αποτύχει → ΜΗΝ καθαρίσεις το state
@@ -1642,7 +1686,12 @@ def finalize_trade_c(price, result, note="", close_exchange=True):
             log.error("[LIVE][C] close failed — keeping position; reconciler θα ξαναδοκιμάσει")
             send_telegram("⚠️ <b>[C][LIVE] CLOSE FAILED</b>\nΗ θέση παραμένει ανοιχτή — retry.")
             return
-    pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
+    # pnl_override: το realized pnl του exchange (από openAvgPrice, με slippage)
+    # — πιο σωστό από τον δικό μας υπολογισμό με entry=signal price. Μόνο live.
+    if pnl_override is not None:
+        pnl = round(pnl_override, 2)
+    else:
+        pnl = round(((price-pos["entry"]) if pos["type"]=="LONG" else (pos["entry"]-price))*pos["qty"], 2)
     # BREAK EVEN: δεν μετράει
     trade_c = {
         "type": pos["type"], "entry": pos["entry"], "close": price,
