@@ -31,6 +31,17 @@ def round_to_tick(price: float, tick: float) -> float:
     return round(round(price / tick) * tick, ndigits)
 
 
+# Bitget codes που σημαίνουν «η θέση είναι πλέον κλειστή»: έκλεισε τώρα (00000)
+# ή ήταν ΗΔΗ flat (22002 = "no position to close", π.χ. χτύπησε το safety SL).
+_CLOSE_OK_CODES = frozenset({"00000", "22002"})
+
+def close_succeeded(code) -> bool:
+    """True αν ο κωδικός απόκρισης σημαίνει ότι η θέση δεν είναι πια ανοιχτή.
+    Το 22002 αντιμετωπίζεται ως επιτυχία ώστε ο caller να καθαρίσει το state
+    αμέσως (όχι retry-loop) όταν το exchange έχει ήδη κλείσει τη θέση."""
+    return str(code) in _CLOSE_OK_CODES
+
+
 def leverage_for(notional: float, balance: float, leverage_cap: int, margin_buffer: float) -> int:
     """Ελάχιστη ακέραιη μόχλευση ώστε margin (=notional/lev) ≤ balance·buffer, με cap."""
     usable = max(balance * margin_buffer, 1e-9)
