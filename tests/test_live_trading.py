@@ -235,3 +235,51 @@ class TestShouldModifyTrailing:
                                          last_modify_ts=0.0, now=10.0) is False
         assert LT.should_modify_trailing(100.0, 100.1, 100.0, self.TICK,
                                          last_modify_ts=0.0, now=10.0) is True
+
+
+# ── real fill accounting (PR3: history-position matching + pnl→result) ──────
+
+class TestSelectClosedPosition:
+    REC_LONG  = {"holdSide": "long",  "uTime": "2000", "closeAvgPrice": "61500", "pnl": "4.5"}
+    REC_SHORT = {"holdSide": "short", "uTime": "2100", "closeAvgPrice": "61400", "pnl": "-2.0"}
+    REC_OLD   = {"holdSide": "long",  "uTime": "900",  "closeAvgPrice": "60000", "pnl": "9.9"}
+
+    def test_matches_side_and_recency(self):
+        rec = LT.select_closed_position(
+            [self.REC_OLD, self.REC_LONG, self.REC_SHORT], "long", opened_at_ms=1000)
+        assert rec is self.REC_LONG          # σωστό side, uTime >= opened_at
+
+    def test_old_records_before_open_are_ignored(self):
+        assert LT.select_closed_position([self.REC_OLD], "long", 1000) is None
+
+    def test_wrong_side_is_ignored(self):
+        assert LT.select_closed_position([self.REC_SHORT], "long", 1000) is None
+
+    def test_most_recent_wins(self):
+        newer = {"holdSide": "long", "uTime": "3000"}
+        rec = LT.select_closed_position([self.REC_LONG, newer], "long", 1000)
+        assert rec is newer
+
+    def test_accepts_lowercase_utime(self):
+        # ο πίνακας λέει uTime, το response example δείχνει utime — δεκτά και τα δύο
+        rec = {"holdSide": "long", "utime": "2000"}
+        assert LT.select_closed_position([rec], "long", 1000) is rec
+
+    def test_no_opened_at_means_no_match(self):
+        # χωρίς χρονικό σημείο αναφοράς δεν ρισκάρουμε λάθος ταίριασμα -> fallback
+        assert LT.select_closed_position([self.REC_LONG], "long", 0) is None
+        assert LT.select_closed_position([self.REC_LONG], "long", None) is None
+
+    def test_empty_and_garbage_records(self):
+        assert LT.select_closed_position([], "long", 1000) is None
+        assert LT.select_closed_position([{"holdSide": "long", "uTime": "junk"}], "long", 1000) is None
+
+
+class TestResultFromPnl:
+    def test_thresholds_match_paper_break_even(self):
+        assert LT.result_from_pnl(4.51) == "WIN"
+        assert LT.result_from_pnl(-2.0) == "LOSS"
+        assert LT.result_from_pnl(0.99) == "BREAK EVEN"
+        assert LT.result_from_pnl(-0.99) == "BREAK EVEN"
+        assert LT.result_from_pnl(1.0) == "WIN"
+        assert LT.result_from_pnl(-1.0) == "LOSS"

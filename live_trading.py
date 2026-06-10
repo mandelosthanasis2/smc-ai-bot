@@ -58,6 +58,34 @@ def should_modify_trailing(current_trigger, new_trigger, price, tick,
     return abs(new_trigger - current_trigger) >= min_step - 1e-9  # float-safe (100.1-100.0 < 0.1)
 
 
+def select_closed_position(records, hold_side, opened_at_ms):
+    """Διαλέγει από το history-position `list` το record της θέσης που μόλις
+    έκλεισε: ίδιο holdSide, ενημερωμένο ΜΕΤΑ το άνοιγμά μας (uTime ≥ opened_at_ms),
+    το πιο πρόσφατο. Δέχεται uTime ΚΑΙ utime (ο πίνακας λέει uTime, το example
+    δείχνει utime — δεν μαντεύουμε, δεχόμαστε και τα δύο). → record ή None."""
+    if not opened_at_ms:
+        return None                       # χωρίς χρονικό σημείο αναφοράς δεν ταιριάζουμε τίποτα
+    best, best_ut = None, -1
+    for o in records or []:
+        if str(o.get("holdSide", "")) != hold_side:
+            continue
+        try:
+            ut = int(o.get("uTime") or o.get("utime") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ut >= opened_at_ms and ut > best_ut:
+            best, best_ut = o, ut
+    return best
+
+
+def result_from_pnl(pnl, be_threshold=1.0) -> str:
+    """WIN/LOSS/BREAK EVEN από το realized pnl του exchange — ίδιο $1 threshold
+    με το paper SL path (συνέπεια στο accounting)."""
+    if abs(pnl) < be_threshold:
+        return "BREAK EVEN"
+    return "WIN" if pnl > 0 else "LOSS"
+
+
 def leverage_for(notional: float, balance: float, leverage_cap: int, margin_buffer: float) -> int:
     """Ελάχιστη ακέραιη μόχλευση ώστε margin (=notional/lev) ≤ balance·buffer, με cap."""
     usable = max(balance * margin_buffer, 1e-9)

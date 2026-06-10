@@ -338,3 +338,17 @@ class TestLiveExchangeManagedExit:
         assert sl.calls == []                        # paper δεν αγγίζει exchange
         assert len(rec.finals) == 1                  # software close όπως πάντα
         assert rec.finals[0]["result"] == "LOSS"
+
+
+@pytest.mark.strategy
+class TestFillAccountingMatchKey:
+    def test_new_positions_carry_opened_at_ms(self, fresh_state):
+        """Το opened_at_ms είναι το match key του real-fill accounting (PR3):
+        χωρίς αυτό το fill lookup πέφτει σε rt.price fallback."""
+        rec = OrderRecorder(fresh_state)
+        rt = _FakeRT(price=100_000.0)
+        C.process_webhook(_entry_deps(rec, rt), fresh_state, "LONG", 100_000.0,
+                          {"tp": "102000", "sl": "99000"})
+        pos = fresh_state["position"]
+        assert pos is not None
+        assert isinstance(pos.get("opened_at_ms"), int) and pos["opened_at_ms"] > 0
