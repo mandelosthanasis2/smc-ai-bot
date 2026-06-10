@@ -1297,14 +1297,20 @@ def place_order_live_c(side, qty, entry, sl, tp):
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
         "leverage": str(leverage), "holdSide": "long" if side == "LONG" else "short",
     })
-    r = client.signed("POST", "/api/v2/mix/order/place-order", {
+    tick = get_contract_specs()["price_tick"]
+    body = {
         "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE,
         "marginMode": "isolated", "marginCoin": "USDT",
         "size": str(qty),
         "side": "buy" if side == "LONG" else "sell",
         "tradeSide": "open", "orderType": "market",
-        "presetStopLossPrice": str(live_trading.round_to_tick(sl, get_contract_specs()["price_tick"])),  # exchange backstop = strategy SL (snapped to tick)
-    })
+        "presetStopLossPrice": str(live_trading.round_to_tick(sl, tick)),  # atomic SL στο fill (snapped to tick)
+    }
+    # Trailing OFF: το TP είναι hard close → preset στο exchange (Option-A path).
+    # Trailing ON: ΚΑΝΕΝΑ preset TP — το TP είναι trigger για trailing (modify-loop).
+    if tp and not state_c.get("trailing_enabled", True):
+        body["presetStopSurplusPrice"] = str(live_trading.round_to_tick(tp, tick))
+    r = client.signed("POST", "/api/v2/mix/order/place-order", body)
     if str(r.get("code")) != "00000":
         log.error("[LIVE][C] OPEN rejected: code=%s msg=%s", r.get("code"), r.get("msg"))
         send_telegram(f"⚠️ <b>[C][LIVE] ORDER FAILED</b>\n{r.get('msg','?')}")
@@ -1387,6 +1393,64 @@ def modify_tpsl_order_c(order_id, trigger_price):
         log.error("[LIVE][C] modify-tpsl failed: code=%s msg=%s", r.get("code"), r.get("msg"))
         return False
     log.info("[LIVE][C] modify-tpsl oid=%s -> trigger=%s ok", order_id, trigger_price)
+    return True
+
+def _discover_pos_sl_oid_c(hold_side):
+    """Ψάχνει στο orders-plan-pending (planType=profit_loss, verbatim) για το
+    position-SL plan order της C → orderId ή None. Δεν υποθέτουμε αν το preset
+    SL του open γίνεται modifiable order — το ΠΑΡΑΤΗΡΟΥΜΕ (discovery-or-place)."""
+    client = _live_client()
+    if client is None:
+        return None
+    path = (f"/api/v2/mix/order/orders-plan-pending?planType=profit_loss"
+            f"&productType={BITGET_PROD_TYPE}&symbol={BITGET_SYMBOL}")
+    r = client.signed("GET", path)
+    if str(r.get("code")) != "00000":
+        log.warning("[LIVE][C] SL discovery failed: code=%s msg=%s", r.get("code"), r.get("msg"))
+        return None
+    for o in ((r.get("data") or {}).get("entrustedList") or []):
+        plan = str(o.get("planType", ""))
+        pos_side = str(o.get("posSide", ""))
+        # SL-τύπου plan, στη δική μας πλευρά (net = one-way mode, δεκτό)
+        if "loss" in plan and pos_side in (hold_side, "net"):
+            log.info("[LIVE][C] SL discovery: found planType=%s oid=%s trigger=%s",
+                     plan, o.get("orderId"), o.get("triggerPrice"))
+            return o.get("orderId")
+    log.info("[LIVE][C] SL discovery: no pending SL plan order (preset is not a plan order)")
+    return None
+
+def move_live_sl_c(pos, new_trigger, force=False):
+    """Μετακινεί το exchange SL της live C θέσης (BE/trailing) — ΠΟΤΕ market close.
+    Discovery-or-place: βρες το orderId του position SL (μία φορά) και κάνε modify·
+    αν δεν υπάρχει plan order (preset = attribute), βάλε pos_loss (έχει orderId).
+    Debounced εκτός αν force (BE/πρώτο trailing set). Returns True/False."""
+    if not pos or not pos.get("live"):
+        return False
+    now = time.time()
+    if not force and not live_trading.should_modify_trailing(
+            pos.get("exchange_sl"), new_trigger, rt.price or new_trigger,
+            get_contract_specs()["price_tick"], pos.get("last_sl_modify_ts", 0.0), now):
+        return False                       # debounce — όχι αποτυχία, απλώς όχι τώρα
+    hold_side = "long" if pos["type"] == "LONG" else "short"
+    oid = pos.get("sl_oid")
+    if not oid:
+        oid = _discover_pos_sl_oid_c(hold_side)
+        if oid:
+            pos["sl_oid"] = oid
+    if oid:
+        ok = modify_tpsl_order_c(oid, new_trigger)
+        if not ok:
+            # Το order μπορεί να μην υπάρχει πια (π.χ. ακυρώθηκε) — ξανά discovery
+            # στο επόμενο tick αντί να κολλήσουμε σε νεκρό orderId.
+            pos["sl_oid"] = None
+            return False
+    else:
+        new_oid = place_tpsl_order_c("pos_loss", new_trigger, hold_side)
+        if not new_oid:
+            return False
+        pos["sl_oid"] = new_oid
+    pos["exchange_sl"] = new_trigger
+    pos["last_sl_modify_ts"] = now
     return True
 
 def c_order_deps():
@@ -1615,6 +1679,10 @@ def check_position_c(price):
         "send_telegram": send_telegram,
         "save_state":    save_state_c,
         "lock":          state_lock_c,
+        # LIVE exit = exchange-managed: μετακινούμε το stop (BE/trailing), δεν
+        # στέλνουμε market close. Το κλείσιμο το ανιχνεύει ο reconciler.
+        "modify_sl":     lambda new_trigger, force=False: move_live_sl_c(
+                             state_c.get("position"), new_trigger, force),
     }
     strategy_c.check_position(deps, state_c, price)
 

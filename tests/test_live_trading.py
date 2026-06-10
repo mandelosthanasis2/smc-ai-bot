@@ -205,3 +205,33 @@ class TestCloseSucceeded:
     def test_real_failures_are_not_success(self):
         for code in ("400172", "40774", "43025", "", None):
             assert LT.close_succeeded(code) is False
+
+
+# ── trailing modify debounce (PR2: exchange-managed exit) ────────────────────
+
+class TestShouldModifyTrailing:
+    TICK = 0.1
+
+    def test_first_set_always_allowed(self):
+        assert LT.should_modify_trailing(None, 61000.0, 61000.0, self.TICK, 0.0, 100.0) is True
+
+    def test_blocks_within_min_interval(self):
+        # μεγάλη βελτίωση αλλά μόλις 1s από το προηγούμενο modify
+        assert LT.should_modify_trailing(61000.0, 61100.0, 61100.0, self.TICK,
+                                         last_modify_ts=100.0, now=101.0) is False
+
+    def test_blocks_tiny_improvement(self):
+        # 2s πέρασαν αλλά βελτίωση $3 < 0.02% * 61000 = $12.2
+        assert LT.should_modify_trailing(61000.0, 61003.0, 61000.0, self.TICK,
+                                         last_modify_ts=100.0, now=103.0) is False
+
+    def test_allows_real_improvement_after_interval(self):
+        assert LT.should_modify_trailing(61000.0, 61015.0, 61000.0, self.TICK,
+                                         last_modify_ts=100.0, now=103.0) is True
+
+    def test_min_step_is_at_least_one_tick(self):
+        # σε χαμηλή τιμή το ποσοστό δίνει < tick· το tick επιβάλλεται ως ελάχιστο
+        assert LT.should_modify_trailing(100.0, 100.05, 100.0, self.TICK,
+                                         last_modify_ts=0.0, now=10.0) is False
+        assert LT.should_modify_trailing(100.0, 100.1, 100.0, self.TICK,
+                                         last_modify_ts=0.0, now=10.0) is True

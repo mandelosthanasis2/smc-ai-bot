@@ -239,3 +239,102 @@ class TestWebhookEntry:
         C.process_webhook(_entry_deps(rec, rt), fresh_state, "LONG", 100_000.0, data)
 
         assert len(rec.orders) == 0                      # existing position untouched
+
+
+# ── PR2: exchange-managed exit για live θέσεις ────────────────────────────
+#
+# Live θέση (pos["live"]=True): ο bot ΔΕΝ στέλνει market close για SL/trailing.
+# Μετακινεί το exchange stop μέσω deps["modify_sl"] (BE/trailing)· το κλείσιμο
+# το εκτελεί το exchange stop και το finalize γίνεται από τον reconciler.
+
+class _SLRecorder:
+    """Καταγράφει τις κλήσεις modify_sl και επιστρέφει προγραμματισμένο αποτέλεσμα."""
+    def __init__(self, ok=True):
+        self.calls = []
+        self.ok = ok
+
+    def __call__(self, new_trigger, force=False):
+        self.calls.append({"trigger": new_trigger, "force": force})
+        return self.ok
+
+
+def _live_deps(recorder, sl_rec):
+    d = _exit_deps(recorder)
+    d["modify_sl"] = sl_rec
+    return d
+
+
+@pytest.mark.strategy
+class TestLiveExchangeManagedExit:
+    def test_live_break_even_moves_exchange_stop_not_close(self, fresh_state):
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder(ok=True)
+        C.check_position(_live_deps(rec, sl), fresh_state, 100_500.0)  # 50% -> BE
+
+        pos = fresh_state["position"]
+        assert pos is not None and pos["phase1_done"] is True
+        assert pos["sl"] == pos["entry"]
+        assert sl.calls == [{"trigger": pos["entry"], "force": True}]  # exchange move
+        assert rec.finals == []                                        # κανένα close
+
+    def test_live_break_even_retries_if_exchange_move_fails(self, fresh_state):
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder(ok=False)
+        C.check_position(_live_deps(rec, sl), fresh_state, 100_500.0)
+
+        pos = fresh_state["position"]
+        assert not pos.get("phase1_done")          # ΔΕΝ σημαδεύτηκε
+        assert pos["sl"] == 99_500.0               # local SL αμετάβλητο
+        C.check_position(_live_deps(rec, sl), fresh_state, 100_500.0)
+        assert len(sl.calls) == 2                  # retry στο επόμενο tick
+
+    def test_live_sl_hit_does_not_software_close(self, fresh_state):
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder()
+        C.check_position(_live_deps(rec, sl), fresh_state, 99_400.0)  # κάτω από SL
+
+        assert rec.finals == []                    # το exchange SL εκτελεί, όχι εμείς
+        assert fresh_state["position"] is not None # state μένει — reconciler finalizes
+
+    def test_live_trailing_moves_exchange_stop_and_never_closes(self, fresh_state):
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder()
+        C.check_position(_live_deps(rec, sl), fresh_state, 101_000.0)  # TP -> trailing on
+        pos = fresh_state["position"]
+        assert pos["trailing_active"] is True
+        assert sl.calls[-1] == {"trigger": pos["trailing_sl"], "force": True}
+
+        C.check_position(_live_deps(rec, sl), fresh_state, 101_500.0)  # νέο peak
+        assert sl.calls[-1]["trigger"] == pytest.approx(101_500.0 * 0.997)
+        assert sl.calls[-1]["force"] is False       # debounced path
+
+        C.check_position(_live_deps(rec, sl), fresh_state, 101_100.0)  # κάτω από TSL
+        assert rec.finals == []                     # κανένα software close
+        assert fresh_state["position"] is not None
+
+    def test_live_trailing_disabled_tp_left_to_exchange(self, fresh_state):
+        fresh_state["trailing_enabled"] = False
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder()
+        C.check_position(_live_deps(rec, sl), fresh_state, 101_000.0)  # TP hit
+
+        assert rec.finals == []                     # preset TP στο exchange κλείνει
+        assert fresh_state["position"] is not None
+
+    def test_live_force_close_still_software_closes(self, fresh_state, monkeypatch):
+        monkeypatch.setenv("FORCE_CLOSE_C", "true")
+        fresh_state["position"] = _open_long(live=True)
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder()
+        C.check_position(_live_deps(rec, sl), fresh_state, 100_200.0)
+
+        assert len(rec.finals) == 1                 # μοναδική εξαίρεση: FORCE_CLOSE
+        assert rec.finals[0]["note"] == "FORCE CLOSE"
+
+    def test_paper_position_unaffected_by_modify_dep(self, fresh_state):
+        fresh_state["position"] = _open_long()       # ΟΧΙ live
+        rec, sl = OrderRecorder(fresh_state), _SLRecorder()
+        C.check_position(_live_deps(rec, sl), fresh_state, 99_400.0)  # SL hit
+
+        assert sl.calls == []                        # paper δεν αγγίζει exchange
+        assert len(rec.finals) == 1                  # software close όπως πάντα
+        assert rec.finals[0]["result"] == "LOSS"

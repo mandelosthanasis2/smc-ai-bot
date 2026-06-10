@@ -147,16 +147,24 @@ def check_position(deps, state, price):
     """
     Διαχειρίζεται ανοιχτή θέση με 2-phase trailing exit (ίδιο με το παλιό
     check_position_c). Τα state mutations γίνονται απευθείας στο `state` dict.
+
+    LIVE θέσεις (pos["live"]): exchange-managed exit. Ο bot ΔΕΝ στέλνει market
+    close για SL/trailing — μόνο μετακινεί το exchange stop μέσω deps["modify_sl"]
+    (BE, trailing). Το πραγματικό κλείσιμο το εκτελεί το exchange stop και το
+    ανιχνεύει ο reconciler («exchange flat, state open → finalize»). Μόνη
+    εξαίρεση: FORCE_CLOSE_C. Paper: συμπεριφορά ταυτόσημη με πριν.
     """
     finalize      = deps["finalize"]
     send_telegram = deps["send_telegram"]
     save_state    = deps["save_state"]
     lock          = deps.get("lock") or _NULL
+    modify_sl     = deps.get("modify_sl")
     cfg           = CONFIG
 
     pos = state["position"]
     if not pos:
         return
+    is_live = bool(pos.get("live")) and modify_sl is not None
 
     if os.environ.get("FORCE_CLOSE_C", "").lower() == "true":
         finalize(price, "WIN" if price > pos["entry"] else "LOSS", "FORCE CLOSE")
@@ -171,6 +179,10 @@ def check_position(deps, state, price):
     if tp_dist > 0 and not pos.get("phase1_done"):
         progress = ((price - entry) / tp_dist) if is_long else ((entry - price) / tp_dist)
         if progress >= cfg["phase1_progress"]:
+            # LIVE: πρώτα το exchange. Αν αποτύχει το move, ΔΕΝ σημαδεύουμε το
+            # phase1_done — retry στο επόμενο tick (το stop μένει στο αρχικό).
+            if is_live and not modify_sl(entry, force=True):
+                return
             with lock:
                 pos["sl"] = entry; pos["phase1_done"] = True
             log.info(f"[C] Phase 1: SL -> entry @ {entry:.2f}")
@@ -181,6 +193,8 @@ def check_position(deps, state, price):
     hit_tp = (is_long and price >= tp) or (not is_long and price <= tp)
     if hit_tp and not pos.get("trailing_active"):
         if not state.get("trailing_enabled", True):
+            if is_live:
+                return  # exchange preset TP κλείνει τη θέση — reconciler finalizes
             finalize(tp, "WIN", "TAKE PROFIT")
             return
         init_tsl = round(price * (1 - cfg["trailing_distance"]), 2) if is_long else round(price * (1 + cfg["trailing_distance"]), 2)
@@ -188,6 +202,10 @@ def check_position(deps, state, price):
             pos["trailing_active"] = True
             pos["trailing_sl"] = max(init_tsl, tp) if is_long else min(init_tsl, tp)  # floor = TP
             pos["trailing_peak"] = price
+        if is_live:
+            # Σφίξε το exchange stop στο αρχικό trailing level (best effort —
+            # αν αποτύχει, θα ξανασταλεί στο επόμενο peak update).
+            modify_sl(pos["trailing_sl"], force=True)
         log.info(f"[C] Trailing activated @ {price:.2f}, TSL={pos['trailing_sl']:.2f}")
         send_telegram(f"🚀 <b>[C] TRAILING ACTIVE</b>\nTP reached ${tp:,.2f} — now trailing 0.3%\nTrailing SL: ${pos['trailing_sl']:,.2f}")
         save_state()
@@ -203,7 +221,11 @@ def check_position(deps, state, price):
                     pos["trailing_peak"] = price
                     pos["trailing_sl"] = max(new_tsl, tp)  # ποτέ κάτω από το TP
                 save_state()
+                if is_live:
+                    modify_sl(pos["trailing_sl"])  # debounced στο bot layer
             if price <= pos["trailing_sl"]:
+                if is_live:
+                    return  # το exchange stop εκτελεί — reconciler finalizes
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         else:
@@ -213,13 +235,19 @@ def check_position(deps, state, price):
                     pos["trailing_peak"] = price
                     pos["trailing_sl"] = min(new_tsl, tp)  # ποτέ πάνω από το TP (SHORT)
                 save_state()
+                if is_live:
+                    modify_sl(pos["trailing_sl"])  # debounced στο bot layer
             if price >= pos["trailing_sl"]:
+                if is_live:
+                    return  # το exchange stop εκτελεί — reconciler finalizes
                 finalize(price, "WIN", f"TRAILING STOP @ ${price:,.2f}")
                 return
         return
 
     hit_sl = (is_long and price <= pos["sl"]) or (not is_long and price >= pos["sl"])
     if hit_sl:
+        if is_live:
+            return  # το exchange SL εκτελεί — reconciler finalizes με το exchange ως αλήθεια
         actual_pnl = ((pos["sl"] - entry) if is_long else (entry - pos["sl"])) * pos["qty"]
         if abs(actual_pnl) < 1.0:
             result = "BREAK EVEN"; note = "BREAK EVEN"
