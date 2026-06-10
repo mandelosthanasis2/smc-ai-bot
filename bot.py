@@ -1339,6 +1339,56 @@ def close_position_live_c(side, qty):
         log.info("[LIVE][C] CLOSE %s qty=%s ok", side, qty)
     return True
 
+# ── Position TP/SL plan orders (exchange-managed exit για τη C) ──────────────
+# Params verbatim από Bitget Place-Tpsl-Order / Modify-Tpsl-Order. ΔΕΝ υπάρχει
+# marginMode σε αυτά τα endpoints (μόνο marginCoin). Για pos_loss/pos_profit το
+# size ΔΕΝ στέλνεται στο place· στο modify το size είναι "". Το triggerPrice
+# στρογγυλοποιείται πάντα στο price tick. PR1 = infra (δεν καλείται ακόμα).
+def place_tpsl_order_c(plan_type, trigger_price, hold_side):
+    """Θέτει position TP/SL στο exchange. plan_type: 'pos_loss' | 'pos_profit'.
+    hold_side: 'long' | 'short'. Returns orderId (str) ή None."""
+    if "C" not in LIVE_STRATEGIES or not live_credentials_ok("C"):
+        return None
+    client = _live_client()
+    if client is None:
+        return None
+    tick = get_contract_specs()["price_tick"]
+    r = client.signed("POST", "/api/v2/mix/order/place-tpsl-order", {
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
+        "planType": plan_type,
+        "triggerPrice": str(live_trading.round_to_tick(trigger_price, tick)),
+        "triggerType": "mark_price",
+        "holdSide": hold_side,
+    })
+    if str(r.get("code")) != "00000":
+        log.error("[LIVE][C] place-tpsl (%s) failed: code=%s msg=%s",
+                  plan_type, r.get("code"), r.get("msg"))
+        return None
+    oid = (r.get("data") or {}).get("orderId")
+    log.info("[LIVE][C] place-tpsl %s trigger=%s oid=%s", plan_type, trigger_price, oid)
+    return oid
+
+def modify_tpsl_order_c(order_id, trigger_price):
+    """Μετακινεί το trigger ενός υπάρχοντος position TP/SL (BE/trailing). size=""
+    για position orders (verbatim). Returns True/False."""
+    if "C" not in LIVE_STRATEGIES or not live_credentials_ok("C"):
+        return False
+    client = _live_client()
+    if client is None:
+        return False
+    tick = get_contract_specs()["price_tick"]
+    r = client.signed("POST", "/api/v2/mix/order/modify-tpsl-order", {
+        "orderId": str(order_id),
+        "symbol": BITGET_SYMBOL, "productType": BITGET_PROD_TYPE, "marginCoin": "USDT",
+        "triggerPrice": str(live_trading.round_to_tick(trigger_price, tick)),
+        "size": "",
+    })
+    if str(r.get("code")) != "00000":
+        log.error("[LIVE][C] modify-tpsl failed: code=%s msg=%s", r.get("code"), r.get("msg"))
+        return False
+    log.info("[LIVE][C] modify-tpsl oid=%s -> trigger=%s ok", order_id, trigger_price)
+    return True
+
 def c_order_deps():
     """(place_order, calc_qty, is_live) για τη C, βάσει mode. Single source of
     truth για το live/paper της C — το χρησιμοποιεί το webhook (main.py)."""

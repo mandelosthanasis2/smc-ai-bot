@@ -131,3 +131,55 @@ def test_close_treats_no_position_as_success():
         "close_position_live_c πρέπει να χρησιμοποιεί close_succeeded "
         "(αλλιώς το 22002 -> retry-loop)"
     )
+
+
+# ── PR1 infra: position TP/SL plan-order helpers (verbatim Bitget params) ────
+_TPSL_PATH = "/api/v2/mix/order/place-tpsl-order"
+_MODIFY_TPSL_PATH = "/api/v2/mix/order/modify-tpsl-order"
+
+
+def _signed_dict(func_name, path):
+    """Το dict literal που περνιέται στο client.signed('POST', path, {...})."""
+    tree = ast.parse(_BOT_SRC.read_text(encoding="utf-8"))
+    func = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == func_name), None)
+    assert func is not None, f"{func_name} δεν βρέθηκε στο bot.py"
+    for call in ast.walk(func):
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "signed" and len(call.args) >= 3
+                and isinstance(call.args[1], ast.Constant) and call.args[1].value == path
+                and isinstance(call.args[2], ast.Dict)):
+            return call.args[2]
+    raise AssertionError(f"signed call προς {path} δεν βρέθηκε στο {func_name}")
+
+
+def _keys(d):
+    return {k.value for k in d.keys if isinstance(k, ast.Constant)}
+
+
+def _value_src(d, field):
+    for k, v in zip(d.keys, d.values):
+        if isinstance(k, ast.Constant) and k.value == field:
+            return ast.unparse(v)
+    return None
+
+
+def test_place_tpsl_has_required_params_and_no_invalid_ones():
+    d = _signed_dict("place_tpsl_order_c", _TPSL_PATH)
+    keys = _keys(d)
+    required = {"symbol", "productType", "marginCoin", "planType", "triggerPrice", "holdSide"}
+    assert required <= keys, f"place-tpsl λείπουν required: {sorted(required - keys)}"
+    # verbatim: το place-tpsl ΔΕΝ έχει marginMode· pos_loss/pos_profit ΔΕΝ θέλουν size
+    assert "marginMode" not in keys, "place-tpsl δεν έχει πεδίο marginMode"
+    assert "size" not in keys, "pos_loss/pos_profit δεν στέλνουν size"
+    assert "round_to_tick" in (_value_src(d, "triggerPrice") or ""), "triggerPrice όχι tick-rounded"
+
+
+def test_modify_tpsl_has_required_params_and_empty_size():
+    d = _signed_dict("modify_tpsl_order_c", _MODIFY_TPSL_PATH)
+    keys = _keys(d)
+    required = {"orderId", "symbol", "productType", "marginCoin", "triggerPrice", "size"}
+    assert required <= keys, f"modify-tpsl λείπουν required: {sorted(required - keys)}"
+    # verbatim: για position TP/SL το size πρέπει να είναι ""
+    assert _value_src(d, "size") == "''", f"modify-tpsl size πρέπει να είναι '', βρέθηκε {_value_src(d, 'size')}"
+    assert "round_to_tick" in (_value_src(d, "triggerPrice") or ""), "triggerPrice όχι tick-rounded"
