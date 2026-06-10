@@ -42,6 +42,22 @@ def close_succeeded(code) -> bool:
     return str(code) in _CLOSE_OK_CODES
 
 
+def should_modify_trailing(current_trigger, new_trigger, price, tick,
+                           last_modify_ts, now, *,
+                           min_improve_pct=0.0002, min_interval=2.0) -> bool:
+    """Debounce για trailing modifies στο exchange (όριο 10 req/s): στείλε
+    modify ΜΟΝΟ αν η βελτίωση είναι ≥ max(1 tick, min_improve_pct·price)
+    ΚΑΙ έχουν περάσει ≥ min_interval sec από το προηγούμενο. Η «βελτίωση»
+    είναι κατ' απόλυτη τιμή — ο caller εγγυάται την κατεύθυνση (το trailing
+    της C μόνο σφίγγει, ποτέ δεν χαλαρώνει)."""
+    if current_trigger is None:
+        return True                       # πρώτο set — πάντα
+    if (now - last_modify_ts) < min_interval:
+        return False
+    min_step = max(tick or 0.0, price * min_improve_pct)
+    return abs(new_trigger - current_trigger) >= min_step - 1e-9  # float-safe (100.1-100.0 < 0.1)
+
+
 def leverage_for(notional: float, balance: float, leverage_cap: int, margin_buffer: float) -> int:
     """Ελάχιστη ακέραιη μόχλευση ώστε margin (=notional/lev) ≤ balance·buffer, με cap."""
     usable = max(balance * margin_buffer, 1e-9)

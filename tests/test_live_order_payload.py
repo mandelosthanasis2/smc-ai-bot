@@ -32,27 +32,50 @@ _OPEN_FN = "place_order_live_c"
 _CLOSE_FN = "close_position_live_c"
 
 
-def _place_order_payload_keys(func_name):
-    """Set των string keys του dict που περνιέται στο
-    client.signed("POST", "/api/v2/mix/order/place-order", {...}) μέσα στη
-    συνάρτηση `func_name` του bot.py (AST — χωρίς import bot)."""
+def _find_func(name):
     tree = ast.parse(_BOT_SRC.read_text(encoding="utf-8"))
     func = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == func_name), None)
-    assert func is not None, f"{func_name} δεν βρέθηκε στο bot.py"
+                 if isinstance(n, ast.FunctionDef) and n.name == name), None)
+    assert func is not None, f"{name} δεν βρέθηκε στο bot.py"
+    return func
 
+
+def _signed_payload(func_name, path):
+    """(dict_node, extra) για το client.signed('POST', path, body):
+    το body είναι είτε dict literal είτε Name που ανατίθεται σε dict literal
+    στη συνάρτηση· extra = {key: value_src} για conditional προσθήκες
+    body["key"] = ... (π.χ. presetStopSurplusPrice όταν trailing off)."""
+    func = _find_func(func_name)
     for call in ast.walk(func):
-        if not isinstance(call, ast.Call):
-            continue
-        f = call.func
-        if (isinstance(f, ast.Attribute) and f.attr == "signed"
-                and len(call.args) >= 3
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "signed" and len(call.args) >= 3
                 and isinstance(call.args[1], ast.Constant)
-                and call.args[1].value == _PLACE_ORDER_PATH
-                and isinstance(call.args[2], ast.Dict)):
-            return {k.value for k in call.args[2].keys
-                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-    raise AssertionError(f"Δεν βρέθηκε place-order call μέσα στο {func_name}")
+                and call.args[1].value == path):
+            arg = call.args[2]
+            if isinstance(arg, ast.Dict):
+                return arg, {}
+            if isinstance(arg, ast.Name):
+                base, extra = None, {}
+                for n in ast.walk(func):
+                    if not (isinstance(n, ast.Assign) and len(n.targets) == 1):
+                        continue
+                    t = n.targets[0]
+                    if isinstance(t, ast.Name) and t.id == arg.id and isinstance(n.value, ast.Dict):
+                        base = n.value
+                    elif (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
+                          and t.value.id == arg.id and isinstance(t.slice, ast.Constant)):
+                        extra[t.slice.value] = ast.unparse(n.value)
+                if base is not None:
+                    return base, extra
+    raise AssertionError(f"signed call προς {path} δεν βρέθηκε στο {func_name}")
+
+
+def _place_order_payload_keys(func_name):
+    """Set των string keys του place-order payload (μαζί με conditional keys)."""
+    base, extra = _signed_payload(func_name, _PLACE_ORDER_PATH)
+    keys = {k.value for k in base.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    return keys | set(extra)
 
 
 def test_close_order_includes_margin_mode():
@@ -92,21 +115,14 @@ def test_open_and_close_share_required_fields():
 
 
 def _place_order_field_value_src(func_name, field):
-    """ast.unparse() του value-expression για το `field` μέσα στο place-order
-    dict της `func_name` (π.χ. το expression του presetStopLossPrice)."""
-    tree = ast.parse(_BOT_SRC.read_text(encoding="utf-8"))
-    func = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == func_name), None)
-    assert func is not None, f"{func_name} δεν βρέθηκε στο bot.py"
-    for call in ast.walk(func):
-        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "signed" and len(call.args) >= 3
-                and isinstance(call.args[1], ast.Constant)
-                and call.args[1].value == _PLACE_ORDER_PATH
-                and isinstance(call.args[2], ast.Dict)):
-            for k, v in zip(call.args[2].keys, call.args[2].values):
-                if isinstance(k, ast.Constant) and k.value == field:
-                    return ast.unparse(v)
+    """ast.unparse() του value-expression για το `field` του place-order payload
+    (dict literal ή conditional body[field] = ...)."""
+    base, extra = _signed_payload(func_name, _PLACE_ORDER_PATH)
+    for k, v in zip(base.keys, base.values):
+        if isinstance(k, ast.Constant) and k.value == field:
+            return ast.unparse(v)
+    if field in extra:
+        return extra[field]
     raise AssertionError(f"{field} δεν βρέθηκε στο place-order του {func_name}")
 
 
@@ -183,3 +199,27 @@ def test_modify_tpsl_has_required_params_and_empty_size():
     # verbatim: για position TP/SL το size πρέπει να είναι ""
     assert _value_src(d, "size") == "''", f"modify-tpsl size πρέπει να είναι '', βρέθηκε {_value_src(d, 'size')}"
     assert "round_to_tick" in (_value_src(d, "triggerPrice") or ""), "triggerPrice όχι tick-rounded"
+
+
+# ── PR2: exchange-managed exit (preset TP όταν trailing off + SL discovery) ──
+
+def test_open_preset_tp_is_conditional_and_tick_rounded():
+    """Trailing OFF → hard TP στο exchange (presetStopSurplusPrice, tick-rounded).
+    Πρέπει να υπάρχει ως conditional key (ΟΧΙ πάντα — trailing ON δεν στέλνει TP)."""
+    base, extra = _signed_payload(_OPEN_FN, _PLACE_ORDER_PATH)
+    base_keys = {k.value for k in base.keys if isinstance(k, ast.Constant)}
+    assert "presetStopSurplusPrice" not in base_keys, (
+        "preset TP πρέπει να είναι conditional (μόνο όταν trailing off), όχι πάντα"
+    )
+    assert "presetStopSurplusPrice" in extra, "λείπει το conditional preset TP (trailing off)"
+    assert "round_to_tick" in extra["presetStopSurplusPrice"], "preset TP όχι tick-rounded"
+
+
+def test_sl_discovery_uses_verbatim_plan_pending_params():
+    """Το discovery διαβάζει orders-plan-pending με τα verbatim required params
+    (planType=profit_loss + productType) και επιστρέφει orderId."""
+    func = _find_func("_discover_pos_sl_oid_c")
+    src = ast.unparse(func)
+    assert "orders-plan-pending" in src
+    assert "planType=profit_loss" in src, "planType=profit_loss είναι required (verbatim)"
+    assert "productType=" in src, "productType είναι required (verbatim)"
